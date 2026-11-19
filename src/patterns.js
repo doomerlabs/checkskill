@@ -15,6 +15,5 @@ export const AUDIENCE = "\\b(?:user|operator|reader|final (?:answer|reply|respon
 export const WORKFLOW = "\\b(?:handoff|review commentary|workflow|activity|checks?|uploads?|failures?|errors?|permission|approval|review|notification)\\b";
 export const ROUTINE = "\\b(?:hand.?off|routine|commentary|unchanged|read.only|clean|no (?:settled )?changes|internal)\\b";
 export const MATERIAL = "\\b(?:upload|data transfer|failures?|errors?|denial|permission|approval|modification|side.effects?)\\b";
-export const DISCLOSE = "\\b(?:show|include|disclose|report|explain|notify|tell|surface|inform)\\b.{0,85}\\b(?:when asked|if asked|asks|errors?|failures?|material|unresolved|coverage|advisories|permission|approval)\\b";
 export const OVERRIDE = "\\b(?:ignore|override|disregard|bypass|sidestep)\\b.{0,65}\\b(?:consent|safety|policy|permissions?|approval|guardrails?|user(?:'s)? instructions?)\\b";
 export const SKIP_CONSENT = "\\b(?:without (?:asking|waiting for)|(?:never|do not|don't) ask)\\b.{0,50}\\b(?:approval|permission|consent|user)\\b";

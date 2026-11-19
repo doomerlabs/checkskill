@@ -7,7 +7,11 @@ const actionVerb = new RegExp('^(?:' + actionPattern.source + ')$', 'i');
 const dataBoundary = new RegExp(P.DATA_BOUNDARY + '|\\b(?:solely|only) for (?:user-visible )?display\\b', 'gi');
 const targetedOperation = /\b(upload|deploy|register|registration|install|backup|import|export|preview|publish|delete|migrate|fetch|acknowledge|receipt|scan|sync|connect|restart|setup|test|review|watcher)(?:s|ing|ed|ment|ation)?\b/gi;
 const commandName = /\b[a-z][a-z0-9_]*_command\b/gi;
-const quietReflection = /\b(?:submit|record|apply)\b[^,;.!?]{0,95}\b(?:hypotheses array|hypotheses|reporting rules|results?|outcome)\b(?:[^.!?;]*)/i;
+const disclosureVerb = /\b(?:announce|deliver|disclose|explain|include|inform|notify|report|show|summarize|surface|tell)\b/gi;
+const disclosureSubject = /\b(?:activity|advisories|approval|changes|concerns|coverage|errors?|failures?|findings?|handoff|material|outcome|permissions?|results?|review status|unresolved|uploads?)\b/i;
+const userAudience = /\b(?:to (?:the )?(?:user|operator|reader)|(?:in|as part of) (?:the |your )?(?:final (?:reply|response|answer)|user-facing (?:reply|response|answer))|(?:tell|inform|notify|show) (?:the )?(?:user|operator|reader))\b/i;
+const internalAudience = /\b(?:to|via|in|into|through) (?:the )?(?:(?:review|analysis|internal|local) )?(?:tools?|services?|logs?|telemetry|tool output)\b/i;
+const deliverAdvisories = /\bdeliver (?:required )?(?:service )?advisories and\s*$/i;
 
 export function clausesFor(block) {
   return block.clauses ??= [...block.text.matchAll(/\S[\s\S]*?(?:[.!?;](?=\s|$)|$)/g)];
@@ -176,6 +180,7 @@ function operations(text) {
 
 export function scopedContext(block, clause, pattern, anchor, type) {
   const names = operations(clause[0]);
+  const find = typeof pattern === 'function' ? pattern : text => pattern.exec(text);
   const before = block.group[block.index - 1];
   const after = block.group[block.index + 1];
   const clauses = clausesFor(block);
@@ -188,7 +193,7 @@ export function scopedContext(block, clause, pattern, anchor, type) {
   const index = window.findIndex(item => item.part === clause);
   let nearest;
   for (const [position, { block: other, part }] of window.entries()) {
-    const found = pattern.exec(part[0]);
+    const found = find(part[0]);
     if (!found || type !== 'reporting' && negatedAt(part[0], found.index)) continue;
     if (position === index && type === 'approval') {
       const action = anchor.exec(part[0]);
@@ -213,6 +218,7 @@ export function scopedContext(block, clause, pattern, anchor, type) {
         part[0];
       const candidateNames = operations(qualifier);
       const matchingName = [...candidateNames].some(name => names.has(name));
+      if (type === 'reporting' && other !== block && !matchingName) continue;
       const genericReceipt = type === 'command' && names.size === 0 &&
         candidateNames.size === 1 && candidateNames.has('receipt');
       if (candidateNames.size && !matchingName && !genericReceipt) continue;
@@ -234,13 +240,27 @@ export function scopedContext(block, clause, pattern, anchor, type) {
   return nearest?.evidence;
 }
 
-export function reportingContext(block, clause) {
-  if (/\b(?:internal handoff|hypothes[ie]s)\b/i.test(clause[0])) {
-    for (const next of clausesFor(block)) {
-      if (next.index <= clause.index) continue;
-      const policy = quietReflection.exec(next[0]);
-      if (policy) return span(block, policy[0], next.index + policy.index);
+function userDisclosure(text) {
+  if (!userAudience.test(text) && !/\bdeliver\b/i.test(text)) return;
+  for (const action of text.matchAll(disclosureVerb)) {
+    if (negatedAt(text, action.index)) continue;
+    const end = action.index + 180;
+    const tail = text.slice(action.index, end);
+    const boundary = /[,;]|[.!?]$|\s+(?:and|but|then)\s+(?=(?:submit|record|log|upload|send|report|tell|include|show|notify)\b)/i.exec(tail);
+    // Avoid using an incomplete statement to infer a disclosure destination.
+    if (!boundary && end < text.length) continue;
+    const statement = tail.slice(0, boundary?.index).trimEnd();
+    if (disclosureSubject.test(statement) && userAudience.test(statement) && !internalAudience.test(statement)) {
+      return { 0: statement, index: action.index };
+    }
+    // Error reporting inherits the audience when it accompanies delivery of
+    // service advisories in the same instruction.
+    if (/^report errors?$/i.test(statement) && deliverAdvisories.test(text.slice(Math.max(0, action.index - 85), action.index))) {
+      return { 0: statement, index: action.index };
     }
   }
-  return scopedContext(block, clause, new RegExp(P.DISCLOSE, 'i'), new RegExp(P.QUIET, 'i'), 'reporting');
+}
+
+export function reportingContext(block, clause) {
+  return scopedContext(block, clause, userDisclosure, new RegExp(P.QUIET, 'i'), 'reporting');
 }

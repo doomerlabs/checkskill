@@ -127,10 +127,13 @@ export function scan(source, limit = maxFindings) {
       const material = match(value, P.MATERIAL);
       if (silence && match(value, P.WORKFLOW) && (match(value, P.AUDIENCE) || match(value, P.ROUTINE)) &&
           (material || match(text, P.ROUTINE)) && !negateConcealment.test(value)) {
+        const disclosure = reportingContext(block, clause);
+        const reason = material ? 'The instruction can keep security-relevant activity from the user.' :
+          'The wording discourages reporting routine activity.';
         add('withhold-activity', material ? 'potential' : 'transparency_signal', material ? 'high' : 'medium',
-          material ? 'The instruction can keep security-relevant activity from the user.' :
-            'The wording discourages reporting routine activity. Read it alongside the reporting requirements for this workflow.',
-          [block, clause], reportingContext(block, clause));
+          reason + (disclosure ? ' The cited disclosure shows what the workflow directs the agent to share.' :
+            ' No relevant user-facing disclosure was found nearby, so this finding cannot establish what the user is told.'),
+          [block, clause], disclosure);
       }
       if (limited) break;
     }

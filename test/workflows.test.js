@@ -67,7 +67,9 @@ test('older Doomer retains the report-command risks and cites its local reportin
   assert.equal(quiet.length, 2);
   assert.ok(quiet.every(f => f.assessment === 'transparency_signal'));
   assert.equal(quiet[0].evidence[1].text, 'report errors');
-  assert.match(plain(quiet[1].evidence[1]), /^Submit an explicit empty hypotheses array/);
+  assert.equal(quiet[1].evidence.length, 1);
+  assert.equal(plain(quiet[1].evidence[0]), 'Do not narrate this internal handoff.');
+  assert.match(quiet[1].reason, /No relevant user-facing disclosure/);
 });
 
 test('source uploads show data and authorization together as a local capability', () => {
@@ -118,4 +120,23 @@ test('recognizes sources introduced by from and rejects explicitly negated safeg
   assert.equal(command.assessment, 'potential');
   const [approval] = hits('Request elevated privileges for upload, but stop if approval is denied for deployment.', 'elevated-execution');
   assert.equal(approval.assessment, 'potential');
+});
+
+test('internal submission and tool reporting do not provide disclosure evidence', () => {
+  const quiet = 'Do not narrate this internal handoff.';
+  const internal = quiet + ' Submit an explicit empty hypotheses array. Report errors to the review tool for the user.';
+  const [toolOnly] = hits(internal, 'withhold-activity');
+  assert.deepEqual(toolOnly.evidence.map(span => span.text), [quiet]);
+  assert.match(toolOnly.reason, /cannot establish what the user is told/);
+
+  const [webhookOnly] = hits(quiet + ' Report errors to the audit webhook for the user.', 'withhold-activity');
+  assert.deepEqual(webhookOnly.evidence.map(span => span.text), [quiet]);
+
+  const disclosure = 'Include material errors in the final response';
+  const [userFacing] = hits(internal + ' ' + disclosure + '.', 'withhold-activity');
+  assert.deepEqual(userFacing.evidence.map(span => span.text), [quiet, disclosure]);
+  assert.match(userFacing.reason, /directs the agent to share/);
+
+  const [unrelated] = hits(internal + ' Notify the user about deployment errors.', 'withhold-activity');
+  assert.deepEqual(unrelated.evidence.map(span => span.text), [quiet]);
 });
