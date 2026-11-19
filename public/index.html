@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A free preflight for agent skills. Paste or upload a SKILL.md and see explainable findings as you edit.">
+  <title>CheckSkill · Preflight for agent skills</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body id="checkskill">
+  <header class="sp-brand">
+    <a class="sp-home" href="/"><span class="sp-logo" aria-hidden="true">✓</span><strong>CheckSkill</strong></a>
+    <nav aria-label="Site"><a href="#terminal">Terminal</a><a href="#about">About</a></nav>
+  </header>
+  <main>
+    <section class="sp-intro">
+      <h1>Preflight for agent skills.</h1>
+      <p>Paste or upload a <code>SKILL.md</code> to see what might get flagged before you publish or install it.</p>
+    </section>
+    <div class="sp-workspace">
+      <section class="sp-source" aria-label="Skill editor">
+        <header class="sp-panel-head">
+          <label for="sp-editor" class="sp-file">SKILL.md</label>
+          <div class="sp-tools">
+            <button type="button" id="sp-example" class="sp-tool">Load example</button>
+            <button type="button" id="sp-upload" class="sp-tool">Upload file</button>
+            <input id="sp-file" type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden>
+            <button type="button" id="sp-share" class="sp-tool sp-share" disabled>Share</button>
+          </div>
+        </header>
+        <div class="sp-code">
+          <div class="sp-mirror" aria-hidden="true"><div id="sp-lines" class="sp-code-text"></div></div>
+          <textarea id="sp-editor" class="sp-code-text" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="sp-editor-help" placeholder="Paste your SKILL.md here"></textarea>
+          <span id="sp-editor-help" class="sp-sr">Edit or paste Markdown. Findings update as you type.</span>
+        </div>
+        <footer class="sp-panel-foot">
+          <span id="sp-line-count">0 lines</span>
+          <span>We process your skill to return findings, then discard it.</span>
+        </footer>
+        <p id="sp-file-status" class="sp-message" role="status" hidden></p>
+      </section>
+      <section class="sp-findings" aria-labelledby="sp-findings-title">
+        <header class="sp-panel-head">
+          <h2 id="sp-findings-title">Findings <span id="sp-count" hidden></span></h2>
+          <span class="sp-live"><span></span> Live</span>
+        </header>
+        <p class="sp-source-note">CheckSkill rules with references to published scanner checks.</p>
+        <div id="sp-finding-list" class="sp-finding-list"><p class="sp-empty">Paste or upload a skill to see findings here.</p></div>
+        <p id="sp-status" class="sp-sr" aria-live="polite" aria-atomic="true"></p>
+      </section>
+    </div>
+
+    <div class="sp-guides">
+      <section id="terminal">
+        <h2>Use CheckSkill from your terminal</h2>
+        <p>Send your Markdown as the request body to get JSON findings.</p>
+        <pre><code>curl --fail-with-body -sS \
+  -H 'Content-Type: text/markdown' \
+  --data-binary @SKILL.md \
+  https://checkskill.ai/api/scan</code></pre>
+        <p>On macOS, create an unlisted link and open the skill in your browser. Use <code>xdg-open</code> on Linux.</p>
+        <pre><code>link=$(curl -fsS \
+  -H 'Content-Type: text/markdown' \
+  --data-binary @SKILL.md \
+  https://checkskill.ai/api/open) &amp;&amp; open "$link"</code></pre>
+        <p>Use <code>POST /api/share</code> to get the same link in JSON. All three routes also accept <code>application/json</code> with a <code>skill</code> string. Skills can be at most 64 KiB. Share links have a separate 24,000-character limit for the compressed source in the URL.</p>
+      </section>
+      <section id="about">
+        <h2>Why CheckSkill exists</h2>
+        <p>A skill can tell an agent what to run, which content to trust, and what to report to you. CheckSkill highlights instructions worth checking before you publish or install a skill. It’s free and works without an account.</p>
+        <p>Skills.sh publishes audits from Gen Agent Trust Hub, Socket, and Snyk. Those hosted classifiers run on their providers’ infrastructure. CheckSkill runs its own rules on the exact text you provide, including unpublished revisions, and shows the passages behind each finding. The references point to related checks from other scanners. A clear scan only means these rules found no matches. <a href="https://www.skills.sh/audits">Skills.sh audits</a></p>
+        <p>Snyk also offers a CLI that reads local files and sends them to its hosted analysis service. <a href="https://github.com/snyk/agent-scan/blob/main/docs/scanning.md">Snyk scanning documentation</a></p>
+      </section>
+    </div>
+  </main>
+  <footer class="sp-site-foot"><a href="https://github.com/doomerlabs/checkskill">Source on GitHub</a></footer>
+
+  <dialog id="sp-share-dialog" aria-labelledby="sp-share-title">
+    <form method="dialog" class="sp-dialog-form">
+      <h2 id="sp-share-title">Share an unlisted link</h2>
+      <p>The link itself contains your skill. Anyone with the link can read it. Share links allow up to 24,000 characters of compressed, encoded source in the URL, separate from the 64 KiB scan limit.</p>
+      <p id="sp-share-status" role="status" hidden></p>
+      <label id="sp-link-label" hidden>Share link<input id="sp-link" type="text" readonly spellcheck="false"></label>
+      <div class="sp-tools">
+        <button class="sp-tool" autofocus>Close</button>
+        <button type="button" id="sp-generate" class="sp-tool sp-share">Create link</button>
+        <button type="button" id="sp-copy" class="sp-tool sp-share" hidden>Copy link</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
