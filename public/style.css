@@ -129,3 +129,19 @@
   #checkskill .sp-finding-list { max-height: none; }
 }
 #checkskill #sp-editor.sp-plain, #checkskill #sp-editor.sp-plain::selection { color: var(--sp-fg); }
+
+#checkskill .sp-folder-files, #checkskill .sp-folder-note {
+  padding: .5rem .875rem;
+  font-size: .875rem;
+  color: var(--sp-soft);
+}
+#checkskill .sp-folder-files { border-bottom: 1px solid var(--sp-border); }
+#checkskill .sp-folder-files select {
+  max-width: calc(100% - 2rem);
+  margin-inline-start: .4rem;
+  font: inherit;
+  color: var(--sp-fg);
+  background: var(--sp-surface);
+}
+#checkskill .sp-folder-note { margin: 0; border-top: 1px solid var(--sp-border); }
+#checkskill .sp-result-path, #checkskill .sp-file { overflow-wrap: anywhere; }

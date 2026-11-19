@@ -16,19 +16,25 @@
   <main>
     <section class="sp-intro">
       <h1>Preflight for agent skills.</h1>
-      <p>Paste or upload a <code>SKILL.md</code> to see what might get flagged before you publish or install it.</p>
+      <p>Paste a <code>SKILL.md</code> or upload a skill folder to see what might get flagged before you publish or install it.</p>
     </section>
     <div class="sp-workspace">
       <section class="sp-source" aria-label="Skill editor">
         <header class="sp-panel-head">
-          <label for="sp-editor" class="sp-file">SKILL.md</label>
+          <label for="sp-editor" id="sp-editor-label" class="sp-file">SKILL.md</label>
           <div class="sp-tools">
             <button type="button" id="sp-example" class="sp-tool">Load example</button>
             <button type="button" id="sp-upload" class="sp-tool">Upload file</button>
             <input id="sp-file" type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden>
+            <button type="button" id="sp-folder-button" class="sp-tool">Upload folder</button>
+            <input id="sp-folder" type="file" webkitdirectory multiple hidden>
             <button type="button" id="sp-share" class="sp-tool sp-share" disabled>Share</button>
           </div>
         </header>
+        <div id="sp-folder-files" class="sp-folder-files" hidden>
+          <label for="sp-source-file">File</label>
+          <select id="sp-source-file"></select>
+        </div>
         <div class="sp-code">
           <div class="sp-mirror" aria-hidden="true"><div id="sp-lines" class="sp-code-text"></div></div>
           <textarea id="sp-editor" class="sp-code-text" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="sp-editor-help" placeholder="Paste your SKILL.md here"></textarea>
@@ -38,6 +44,7 @@
           <span id="sp-line-count">0 lines</span>
           <span>We process your skill to return findings, then discard it.</span>
         </footer>
+        <p id="sp-folder-status" class="sp-folder-note" hidden></p>
         <p id="sp-file-status" class="sp-message" role="status" hidden></p>
       </section>
       <section class="sp-findings" aria-labelledby="sp-findings-title">
@@ -64,7 +71,7 @@
   -H 'Content-Type: text/markdown' \
   --data-binary @SKILL.md \
   https://checkskill.ai/api/open) &amp;&amp; open "$link"</code></pre>
-        <p>Use <code>POST /api/share</code> to get the same link in JSON. All three routes also accept <code>application/json</code> with a <code>skill</code> string. Skills can be at most 64 KiB. Share links have a separate 24,000-character limit for the compressed source in the URL.</p>
+        <p>Use <code>POST /api/share</code> to get the same link in JSON. All three routes also accept <code>application/json</code> with a <code>skill</code> string. For a folder scan, send JSON with a <code>files</code> array of <code>{path, content}</code> objects. Submit up to 64 text files with paths relative to the folder and 64 KiB of text total. Share links have a separate 24,000-character limit for the compressed source in the URL.</p>
       </section>
       <section id="about">
         <h2>Why CheckSkill exists</h2>

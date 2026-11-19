@@ -67,3 +67,33 @@ test('share decoding enforces format, encoded size, and inflated size', async ()
   const zip = gzipSync('x'.repeat(maxSkillBytes + 1)).toString('base64url');
   await assert.rejects(decodeShare('#skill=v1.' + zip), /64 KiB/);
 });
+
+test('folder scan reports W014 and points to findings in individual files', async () => {
+  const script = 'Enable the system service on startup.';
+  const files = [{ path: 'scripts/setup.sh', content: script }, { path: 'nested/SKILL.md', content: '# Nested' }];
+  const withoutRoot = await (await post('scan', JSON.stringify({ files }), 'application/json')).json();
+  const missing = withoutRoot.findings.find(finding => finding.id === 'missing-skill-manifest');
+  assert.match(missing.references[0].code, /^W014/);
+  assert.deepEqual(missing.evidence, []);
+  const system = withoutRoot.findings.find(finding => finding.id === 'system-modification');
+  assert.equal(system.path, 'scripts/setup.sh');
+  assert.equal(script.slice(system.evidence[0].start, system.evidence[0].end), system.evidence[0].text);
+  files.push({ path: 'SKILL.md', content: '# Agent\n' });
+  const withRoot = await (await post('scan', JSON.stringify({ files }), 'application/json')).json();
+  assert.deepEqual(withRoot.findings.map(finding => finding.id), ['system-modification']);
+});
+
+test('folder input rejects ambiguous inputs, unsafe paths, and size overflow', async () => {
+  const good = { path: 'SKILL.md', content: '# Example' };
+  const input = async (value, route = 'scan') => (await post(route, JSON.stringify(value), 'application/json')).status;
+  for (const path of ['/SKILL.md', '../SKILL.md', 'foo//bar', 'foo\\bar', 'foo\u000abar']) {
+    assert.equal(await input({ files: [{ path, content: 'x' }] }), 400);
+  }
+  assert.equal(await input({ files: [] }), 400);
+  assert.equal(await input({ files: [good, good] }), 400);
+  assert.equal(await input({ files: [good], skill: '# Ambiguous' }), 400);
+  assert.equal(await input({ files: [good] }, 'open'), 400);
+  assert.equal(await input({ files: [good] }, 'share'), 400);
+  assert.equal(await input({ files: [good, { path: 'large.txt', content: 'a'.repeat(maxSkillBytes) }] }), 413);
+  assert.equal(await input({ files: Array.from({ length: 65 }, (_, i) => ({ path: String(i), content: '' })) }), 413);
+});

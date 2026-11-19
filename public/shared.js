@@ -1,4 +1,6 @@
 export const maxSkillBytes = 64 * 1024;
+export const maxPackageFiles = 64;
+export const maxPathLength = 256;
 export const maxShareCharacters = 24000;
 
 export async function decodeShare(fragment) {

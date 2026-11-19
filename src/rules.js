@@ -1,3 +1,4 @@
+import { maskEvidence, missingManifest, scanSnykSignals, snykReference } from './snyk-rules.js';
 import * as P from './patterns.js';
 
 const expressions = new Map(Object.values(P).map(pattern => [pattern, new RegExp(pattern, 'i')]));
@@ -12,9 +13,8 @@ const flowPattern = new RegExp(P.EXECUTE + "[\\s`:,\\-]+(?:[\\w'-]+[\\s`]+){0,5}
 const maxFindings = 100;
 
 const genUrl = 'https://skills.sh/doomerlabs/skills/doomer/security/agent-trust-hub';
-const snykUrl = 'https://github.com/snyk/agent-scan/blob/main/docs/issue-codes.md#prompt-injection-in-skill';
 const gen = code => ({ name: 'Gen Agent Trust Hub', code, url: genUrl });
-const snyk = { name: 'Snyk', code: 'E004 · Prompt injection in skill', url: snykUrl };
+const snyk = snykReference('prompt_injection_skill_instructions', 'E004');
 const rules = {
   'dynamic-execution': ['Dynamic execution', 'An execution verb controls a command sourced from output or supplied verbatim.', [gen('Dynamic execution')]],
   'remote-command-provenance': ['Remote command provenance', 'An instruction could execute a command whose value comes from an external source.', [gen('Remote code execution')]],
@@ -110,7 +110,7 @@ function* clauses(text) {
   for (const clause of text.matchAll(/\S[\s\S]*?(?:[.!?](?=\s|$)|$)/g)) yield clause;
 }
 
-export function scan(source) {
+export function scan(source, limit = maxFindings) {
   const blocks = markdownBlocks(source);
   const findings = [];
   let limited = false;
@@ -126,7 +126,7 @@ export function scan(source) {
   }
 
   function add(id, assessment, severity, reason, ...matches) {
-    if (findings.length === maxFindings) {
+    if (findings.length === limit) {
       limited = true;
       return;
     }
@@ -229,6 +229,25 @@ export function scan(source) {
     add('supplied-executable', trust ? 'capability' : 'requires_provenance', 'info',
       'Trace who provides the executable path and how the host verifies its provenance.', binary, call, trust);
   }
+  const additional = scanSnykSignals(source, limit - findings.length);
+  findings.push(...additional.findings);
+  maskEvidence(findings, additional.secrets, source);
   findings.sort((a, b) => a.evidence[0].start - b.evidence[0].start);
+  return { engine: 'checkskill', findings, limited: limited || additional.limited };
+}
+
+export function scanPackage(files) {
+  const manifest = files.find(file => file.path === 'SKILL.md');
+  const findings = manifest ? [] : [missingManifest()];
+  let limited = false;
+  const ordered = manifest ? [manifest, ...files.filter(file => file !== manifest)] : files;
+  for (const { path, content } of ordered) {
+    const result = scan(content, maxFindings - findings.length);
+    for (const finding of result.findings) findings.push({ ...finding, path });
+    if (result.limited) {
+      limited = true;
+      break;
+    }
+  }
   return { engine: 'checkskill', findings, limited };
 }

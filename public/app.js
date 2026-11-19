@@ -1,4 +1,4 @@
-import { decodeShare, maxSkillBytes } from './shared.js';
+import { decodeShare, maxPackageFiles, maxPathLength, maxSkillBytes } from './shared.js';
 
 const $ = id => document.getElementById(id);
 const editor = $('sp-editor');
@@ -6,6 +6,8 @@ const mirror = document.querySelector('.sp-mirror');
 const lines = $('sp-lines');
 const results = $('sp-finding-list');
 const file = $('sp-file');
+const folder = $('sp-folder');
+const sourceFile = $('sp-source-file');
 const share = $('sp-share');
 const dialog = $('sp-share-dialog');
 const generate = $('sp-generate');
@@ -20,6 +22,8 @@ let scanTimer;
 let scanRequest;
 let shareRequest;
 let shareSource = '';
+let packageFiles;
+let activePath;
 
 const example = `---
 name: review-brief
@@ -64,6 +68,7 @@ function paintSource(source) {
   const fragment = document.createDocumentFragment();
   const byLine = new Map();
   for (const [index, finding] of findings.entries()) {
+    if (finding.path !== activePath) continue;
     for (const span of finding.evidence) {
       for (let number = span.line; number <= span.endLine; number++) {
         const spans = byLine.get(number) ?? [];
@@ -121,6 +126,7 @@ function lineLabel(span) {
 }
 
 function revealSpan(span) {
+  if (!span) return;
   const row = lines.children[span.line - 1];
   const match = row?.querySelector('mark[data-start="' + span.start + '"]') ?? row;
   if (!match) return;
@@ -145,6 +151,7 @@ function findingDetail(finding, index) {
     const jump = element('button', 'sp-tool', 'Jump to source');
     jump.type = 'button';
     jump.addEventListener('click', () => {
+      if (finding.path) showFile(finding.path);
       editor.focus({ preventScroll: true });
       editor.setSelectionRange(span.start, span.end);
       syncScroll();
@@ -186,7 +193,9 @@ function showFindings({ status, scanned = false, limited = false } = {}) {
     const meta = element('span', 'sp-hit-meta');
     const assessment = element('span', 'sp-severity', assessments[finding.assessment]);
     assessment.dataset.level = finding.severity;
-    meta.append(assessment, element('span', '', lineLabel(finding.evidence[0])));
+    meta.append(assessment);
+    if (finding.path) meta.append(element('span', 'sp-result-path', finding.path));
+    if (finding.evidence[0]) meta.append(element('span', '', lineLabel(finding.evidence[0])));
     button.append(meta, element('span', 'sp-hit-name', finding.title),
       element('span', 'sp-vendors', finding.references.map(item => item.name).join(' · ')));
     entry.append(button, findingDetail(finding, index));
@@ -201,11 +210,12 @@ function showFindings({ status, scanned = false, limited = false } = {}) {
 }
 
 async function api(route, source, controller) {
+  const markdown = typeof source === 'string';
   const response = await fetch('/api/' + route, {
     method: 'POST',
     cache: 'no-store',
-    headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
-    body: source,
+    headers: { 'Content-Type': markdown ? 'text/markdown; charset=utf-8' : 'application/json' },
+    body: markdown ? source : JSON.stringify(source),
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]),
   });
   const data = await response.json();
@@ -220,18 +230,20 @@ function queueScan() {
   findings = [];
   selected = -1;
   const source = editor.value;
-  const oversized = encoder.encode(source).byteLength > maxSkillBytes;
+  const entries = packageFiles && [...packageFiles].map(([path, content]) => ({ path, content }));
+  const size = entries ? entries.reduce((total, { content }) => total + encoder.encode(content).byteLength, 0) :
+    encoder.encode(source).byteLength;
+  const oversized = size > maxSkillBytes;
   editor.classList.toggle('sp-plain', oversized);
   if (oversized) lines.replaceChildren();
   else paintSource(source);
-  const lineCount = source ? source.split('\n').length : 0;
-  $('sp-line-count').textContent = lineCount + (lineCount === 1 ? ' line' : ' lines');
-  share.disabled = oversized || !source.trim();
+  updateLineCount();
+  share.disabled = Boolean(entries) || oversized || !source.trim();
   if (oversized) {
-    showFindings({ status: 'The skill can be at most 64 KiB.' });
+    showFindings({ status: entries ? 'Folder text can be at most 64 KiB in total.' : 'The skill can be at most 64 KiB.' });
     return;
   }
-  if (!source.trim()) {
+  if (!entries && !source.trim()) {
     showFindings({ status: 'Paste or upload a skill to see findings here.' });
     return;
   }
@@ -240,10 +252,10 @@ function queueScan() {
     const controller = new AbortController();
     scanRequest = controller;
     try {
-      const data = await api('scan', source, controller);
+      const data = await api('scan', entries ? { files: entries } : source, controller);
       if (current !== revision) return;
       findings = data.findings;
-      paintSource(source);
+      paintSource(editor.value);
       showFindings({ scanned: true, limited: data.limited,
         status: findings.length ? undefined : 'No matches for the CheckSkill rules.' });
     } catch {
@@ -252,10 +264,34 @@ function queueScan() {
   }, 220);
 }
 
-function replaceSource(source) {
+function updateLineCount() {
+  const count = editor.value ? editor.value.split('\n').length : 0;
+  $('sp-line-count').textContent = count + (count === 1 ? ' line' : ' lines');
+}
+
+function setEditor(source) {
   editor.value = source;
   editor.scrollTop = 0;
   editor.scrollLeft = 0;
+}
+
+function showFile(path) {
+  if (path === activePath) return;
+  activePath = path;
+  sourceFile.value = path;
+  $('sp-editor-label').textContent = path;
+  setEditor(packageFiles.get(path));
+  updateLineCount();
+  if (!editor.classList.contains('sp-plain')) paintSource(editor.value);
+}
+
+function replaceSource(source) {
+  packageFiles = undefined;
+  activePath = undefined;
+  $('sp-editor-label').textContent = 'SKILL.md';
+  $('sp-folder-files').hidden = true;
+  message($('sp-folder-status'), '');
+  setEditor(source);
   queueScan();
 }
 
@@ -263,8 +299,10 @@ editor.addEventListener('scroll', syncScroll);
 editor.addEventListener('input', () => {
   importRevision++;
   message($('sp-file-status'), '');
+  if (packageFiles) packageFiles.set(activePath, editor.value);
   queueScan();
 });
+sourceFile.addEventListener('change', () => showFile(sourceFile.value));
 results.addEventListener('click', event => {
   const button = event.target.closest('button[data-index]');
   if (!button) return;
@@ -279,8 +317,10 @@ results.addEventListener('click', event => {
     button.setAttribute('aria-expanded', 'true');
     $(button.getAttribute('aria-controls')).hidden = false;
   }
+  const finding = findings[selected];
+  if (finding?.path) showFile(finding.path);
   paintSource(editor.value);
-  if (selected !== -1) revealSpan(findings[selected].evidence[0]);
+  revealSpan(finding?.evidence[0]);
 });
 
 $('sp-example').addEventListener('click', () => {
@@ -304,6 +344,64 @@ file.addEventListener('change', async () => {
   } catch (error) {
     if (current === importRevision) message($('sp-file-status'),
       upload.size > maxSkillBytes ? error.message : 'Could not read that file as UTF-8 Markdown.');
+  }
+});
+
+$('sp-folder-button').addEventListener('click', () => folder.click());
+folder.addEventListener('change', async () => {
+  const uploads = [...folder.files];
+  folder.value = '';
+  if (!uploads.length) return;
+  const current = ++importRevision;
+  let skipped = 0;
+  let total = 0;
+  const files = new Map();
+  try {
+    for (const upload of uploads) {
+      if (current !== importRevision) return;
+      const path = upload.webkitRelativePath.split('/').slice(1).join('/');
+      if (!path || path.split('/').some(part => part === '.git')) {
+        skipped++;
+        continue;
+      }
+      if (/^(?:image|audio|video)\//.test(upload.type) || /\.(?:zip|rar|7z|gz|tar|pdf|png|jpe?g|webp|exe|dll|so|dylib|wasm)$/i.test(path)) {
+        skipped++;
+        continue;
+      }
+      if (path.length > maxPathLength || /[\\\p{Cc}\p{Cf}]/u.test(path)) throw new Error('A file path is too long or contains an unsupported character.');
+      if (upload.size > maxSkillBytes - total) throw new Error('Folder text can be at most 64 KiB in total.');
+      const bytes = await upload.arrayBuffer();
+      let content;
+      try {
+        content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        skipped++;
+        continue;
+      }
+      if (files.size === maxPackageFiles) throw new Error('Folders can contain up to 64 text files.');
+      total += upload.size;
+      files.set(path, content.replace(/\r\n?/g, '\n'));
+    }
+    if (current !== importRevision) return;
+    if (!files.size) throw new Error('The folder has no readable UTF-8 files.');
+    packageFiles = files;
+    activePath = undefined;
+    findings = [];
+    const paths = [...files.keys()].sort();
+    sourceFile.replaceChildren(...paths.map(path => {
+      const option = element('option', '', path);
+      option.value = path;
+      return option;
+    }));
+    $('sp-folder-files').hidden = false;
+    showFile(files.has('SKILL.md') ? 'SKILL.md' : paths[0]);
+    const note = (skipped ? skipped + (skipped === 1 ? ' file skipped. ' : ' files skipped. ') : '') +
+      'Folder scans cover the uploaded text files. Share links are available for single-file scans.';
+    message($('sp-folder-status'), note);
+    message($('sp-file-status'), '');
+    queueScan();
+  } catch (error) {
+    if (current === importRevision) message($('sp-file-status'), error.message || 'Could not read the folder.');
   }
 });
 
