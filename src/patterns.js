@@ -1,7 +1,7 @@
 // Patterns ported from the offline audit. Matching is case-insensitive.
 export const EXECUTE = "\\b(?:run|execute|eval(?:uate)?|invoke|launch)\\b";
 export const COMMAND_INPUT = "\\b(?:[a-z][a-z0-9]*_(?:[a-z0-9]+_)*command|command\\s+(?:strings?|payloads?|fields?)|shell\\s+(?:commands?|scripts?)|(?:the|its|that|this|a|supplied|returned)\\s+(?:exact\\s+)?command)\\b";
-export const ORIGIN = "\\b(?:webhook|(?:api|server|service|tool|hook|worker|plugin|remote) (?:response|report|output|result)|(?:remote|external|third.party) (?:service|server|report)|response body|returns? (?:a |the )?(?:command|script)|returned|supplied|provided|payload)\\b";
+export const ORIGIN = "\\b(?:webhook|(?:api|server|service|tool|hook|worker|plugin|remote) (?:responses?|reports?|outputs?|results?)|(?:remote|external|third.party) (?:service|server|report)|response body|returns? (?:a |the )?(?:command|script)|returned|supplied|provided|payload)\\b";
 export const VERBATIM = "\\b(?:exact|verbatim|as.received|as.is|unchanged|raw|without (?:inspection|validation))\\b";
 export const PROHIBIT_EXECUTION = "\\b(?:never|do not|don't|must not)\\s+(?:execute|run|eval|invoke|launch)\\b|\\b(?:never|not)\\s+(?:executable input|commands? to execute|a command)\\b";
 export const FIXED = "\\b(?:fixed|hard.coded|local(?:ly)? (?:generated|defined)|allowlisted|predefined)\\s+(?:local\\s+)?(?:operation|command|subcommand|executable)\\b";
@@ -9,10 +9,7 @@ export const VALIDATE = "\\b(?:validat\\w*|allowlist\\w*|literal arguments?|para
 export const TRUSTED = "\\b(?:trusted|installed|local|native)\\b";
 export const APPROVAL = "\\b(?:request|ask for|seek|obtain|retry)\\b.{0,80}\\b(?:sandbox escalation|escalated permissions|elevated privileges|outside (?:the )?sandbox|administrator privileges)\\b";
 export const DENIAL = "\\b(?:respect (?:permission |host )?denials?|(?:if|when) (?:approval|permission) is denied|require (?:explicit |user |human )?approval|stop (?:if|on) (?:denied|refusal)|deny by default)\\b";
-export const REVIEW_SOURCE = "\\b(?:hypothesis request|review (?:report|findings?|areas?)|tool results?|remote findings|retrieved (?:pages?|documents?)|untrusted (?:web|content|source)|copied comments?|(?:external|third.party) (?:content|documents?))\\b";
-export const REVIEW_ACTION = "\\b(?:investigate|assess|inspect|propose|summarize|follow|act on|perform|generate|submit|use|analy[sz]e|treat)\\b";
 export const DATA_BOUNDARY = "\\b(?:display.only|untrusted (?:display content|data|evidence)|(?:treat|regard).{0,65}as (?:data|evidence)|(?:ignore|disregard|never follow|do not follow).{0,60}(?:embedded|instructions|directives)|not (?:as )?(?:agent )?instructions)\\b";
-export const ADVISORY = "\\b(?:advisory|advisories|notice|notices)\\b";
 export const QUIET = "\\b(?:omit|suppress|hide|conceal|keep.{0,45}(?:secret|quiet)|(?:never|do not|don't) (?:mention|tell|inform|narrate|disclose|show|report|reveal))\\b";
 export const AUDIENCE = "\\b(?:user|operator|reader|final (?:answer|reply|response)|reporting)\\b";
 export const WORKFLOW = "\\b(?:handoff|review commentary|workflow|activity|checks?|uploads?|failures?|errors?|permission|approval|review|notification)\\b";

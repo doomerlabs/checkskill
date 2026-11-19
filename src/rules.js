@@ -1,3 +1,5 @@
+import { externalFlows, reportingContext, scopedContext, clausesFor } from './workflows.js';
+import { evidence, markdownBlocks, proseView } from './markdown.js';
 import { maskEvidence, missingManifest, scanSnykSignals, snykReference } from './snyk-rules.js';
 import * as P from './patterns.js';
 
@@ -11,6 +13,12 @@ const negateConcealment = /\b(?:never|do not|don't)\b.{0,90}\b(?:hide|omit|suppr
 const negateOverride = /\b(?:never|do not|don't|must not)\s+(?:ignore|override|disregard|bypass|sidestep)\b/i;
 const flowPattern = new RegExp(P.EXECUTE + "[\\s`:,\\-]+(?:[\\w'-]+[\\s`]+){0,5}" + P.COMMAND_INPUT, "i");
 const maxFindings = 100;
+const acknowledge = /\bwatch notice-ack\b/i;
+const receiptRule = /\b(?:manual receipt|manual acknowledgement)\b/i;
+const validatedReceipt = /\bvalidated ID and revision\b/i;
+const sourceUpload = /\b(?:uploads?|sends?|transmits?)\b.{0,90}\b(?:source (?:code|snapshots?)|repository diffs?)\b(?:\s+and the diff)?/i;
+const uploadFallback = /^otherwise ask the user\b/i;
+const uploadApproval = /\b(?:reuse|require|obtain|ask for)\b.{0,130}\b(?:saved|explicit|user|service) approval\b/i;
 
 const genUrl = 'https://skills.sh/doomerlabs/skills/doomer/security/agent-trust-hub';
 const gen = code => ({ name: 'Gen Agent Trust Hub', code, url: genUrl });
@@ -21,80 +29,11 @@ const rules = {
   'elevated-execution': ['Elevated execution', 'The skill asks for execution beyond the default permission boundary.', [gen('Privilege escalation')]],
   'supplied-executable': ['Supplied executable', 'The skill invokes an executable whose path is supplied at runtime.', [gen('Command execution')]],
   'external-instructions': ['External content in agent workflow', 'The agent is directed to use text from a review, tool, or other external source.', [gen('Indirect prompt injection')]],
+  'source-upload': ['Consent-gated source upload', 'The workflow can send repository source or diffs and describes the authorization required.', []],
   'skip-consent': ['Skip user consent', 'An elevation request appears near an instruction to proceed without asking.', [snyk, gen('Privilege escalation')]],
   'withhold-activity': ['Withhold activity', 'The skill directs the agent to omit workflow activity from user-facing reporting.', [snyk]],
   'override-boundary': ['Override a trust boundary', 'An instruction directs the agent to disregard consent, safety policy, permissions, or user instructions.', [snyk]],
 };
-
-function markdownBlocks(source) {
-  const blocks = [];
-  const sections = new Map();
-  let section = '';
-  let fence = null;
-  let frontmatter = false;
-  let buffer = [];
-
-  function flush() {
-    if (!buffer.length) return;
-    // No rule or context pattern matches a block shorter than "local".
-    if (buffer.length === 1 && buffer[0].text.length < 5) {
-      buffer = [];
-      return;
-    }
-    let length = 0;
-    for (const entry of buffer) {
-      entry.normalized = length;
-      length += entry.text.length + 1;
-    }
-    const group = sections.get(section) ?? [];
-    const block = {
-      section, group, index: group.length, line: buffer[0].line,
-      text: buffer.map(entry => entry.text).join(' '), entries: buffer,
-    };
-    group.push(block);
-    sections.set(section, group);
-    blocks.push(block);
-    buffer = [];
-  }
-
-  let line = 0;
-  for (const row of source.matchAll(/([^\r\n]*)(?:\r\n|\r|\n|$)/g)) {
-    line++;
-    const raw = row[1];
-    const text = raw.trim();
-    if (text === '---' && (line === 1 || frontmatter)) {
-      frontmatter = !frontmatter;
-      continue;
-    }
-    if (frontmatter) continue;
-
-    const marker = /^\s*(`{3,}|~{3,})(.*)$/.exec(raw);
-    if (marker && (!fence || (marker[1].startsWith(fence) && !marker[2].trim()))) {
-      flush();
-      fence = fence ? null : marker[1];
-      continue;
-    }
-    const heading = !fence && /^\s*#{1,6}\s+(.+)$/.exec(raw);
-    if (heading || !text || (!fence && /^[-*+] /.test(text))) flush();
-    if (heading) {
-      section = heading[1];
-      continue;
-    }
-    if (text) buffer.push({ line, text, rowStart: row.index, start: row.index + raw.indexOf(text) });
-  }
-  flush();
-  return blocks;
-}
-
-function evidence(source, block, index, length) {
-  const finish = index + length - 1;
-  const first = block.entries.findLast(entry => entry.normalized <= index);
-  const last = block.entries.findLast(entry => entry.normalized <= finish);
-  const start = first.start + Math.min(index - first.normalized, first.text.length);
-  const end = last.start + Math.min(finish - last.normalized + 1, last.text.length);
-  return { start, end, line: first.line, endLine: last.line, column: start - first.rowStart + 1,
-    section: block.section, text: source.slice(start, end) };
-}
 
 function context(block, pattern, filter = () => true) {
   let first = block.index;
@@ -106,24 +45,12 @@ function context(block, pattern, filter = () => true) {
   }
 }
 
-function* clauses(text) {
-  for (const clause of text.matchAll(/\S[\s\S]*?(?:[.!?](?=\s|$)|$)/g)) yield clause;
-}
-
 export function scan(source, limit = maxFindings) {
   const blocks = markdownBlocks(source);
   const findings = [];
   let limited = false;
-  let externalReported = false;
   let executableFinding;
-  let disclosure;
-  for (const block of blocks) {
-    const found = match(block.text, P.DISCLOSE);
-    if (found) {
-      disclosure = [block, found];
-      break;
-    }
-  }
+  let fixedReceipt;
 
   function add(id, assessment, severity, reason, ...matches) {
     if (findings.length === limit) {
@@ -139,55 +66,82 @@ export function scan(source, limit = maxFindings) {
 
   for (const block of blocks) {
     const { text } = block;
-    const flows = [];
     const blockOrigin = match(text, P.ORIGIN);
-    const quiet = [];
-    for (const clause of clauses(text)) {
+    for (const clause of clausesFor(block)) {
       const value = clause[0];
       const flow = match(value, flowPattern);
       if (flow && !match(value, P.PROHIBIT_EXECUTION)) {
         const origin = match(value, P.ORIGIN);
         const verbatim = match(value, P.VERBATIM);
         if (origin || verbatim || (blockOrigin && /\b\w+_command\b/i.test(value))) {
-          flows.push({
-            primary: [block, flow, clause.index],
-            origin: origin ? [block, origin, clause.index] : blockOrigin && [block, blockOrigin],
-            verbatim: verbatim && [block, verbatim, clause.index],
-          });
+          const flowEnd = flow.index + flow[0].length;
+          if (value[flowEnd] === String.fromCharCode(96) && flow[0].includes(String.fromCharCode(96))) {
+            flow[0] += value[flowEnd];
+          }
+          const primary = [block, flow, clause.index];
+          const originEvidence = origin ? [block, origin, clause.index] :
+            blockOrigin && blockOrigin.index < clause.index + flow.index && [block, blockOrigin];
+          const verbatimEvidence = verbatim && [block, verbatim, clause.index];
+          const fixed = !verbatim && scopedContext(block, clause, expressions.get(P.FIXED), flowPattern, 'command');
+          const validation = fixed && scopedContext(block, clause, expressions.get(P.VALIDATE), flowPattern, 'command');
+          if (fixed && validation) {
+            add('dynamic-execution', 'guarded', 'info',
+              'The command is tied to a fixed operation and validated arguments. Check that the implementation enforces both.',
+              primary, fixed, validation);
+          } else {
+            add('dynamic-execution', 'potential', 'high',
+              'The command value is resolved at runtime. Its contents can change independently of the skill.',
+              primary, originEvidence, verbatimEvidence);
+            add('remote-command-provenance', 'requires_provenance', 'high',
+              'An externally controlled command value could select host code. Check who produces the value and what the executor accepts.',
+              primary, originEvidence, verbatimEvidence);
+          }
         }
       }
-      const silence = match(value, P.QUIET);
-      if (silence && match(value, P.WORKFLOW) && (match(value, P.AUDIENCE) || match(value, P.ROUTINE)) &&
-          !negateConcealment.test(value)) quiet.push(clause);
-    }
-    if (flows.length) {
-      const fixed = context(block, P.FIXED);
-      const validation = context(block, P.VALIDATE);
-      const { primary, origin, verbatim } = flows.find(flow => flow.verbatim) ?? flows[0];
-      if (fixed && validation && !flows.some(flow => flow.verbatim)) {
-        add('dynamic-execution', 'guarded', 'info',
-          'Nearby instructions bind execution to a fixed operation and call for validation. Check that the implementation enforces both.',
-          primary, fixed, validation);
-      } else {
-        add('dynamic-execution', 'potential', 'high',
-          'The command value is resolved at runtime. Its contents can change independently of the skill.', primary, origin, verbatim);
-        add('remote-command-provenance', 'requires_provenance', 'high',
-          'An externally controlled command value could select host code. Check who produces the value and what the executor accepts.',
-          primary, origin, verbatim);
+
+      const approval = match(value, P.APPROVAL);
+      if (approval) {
+        const anchor = expressions.get(P.APPROVAL);
+        const guard = scopedContext(block, clause, expressions.get(P.DENIAL), anchor, 'approval');
+        add('elevated-execution', guard ? 'guarded' : 'potential', guard ? 'info' : 'high',
+          guard ? 'The approval instructions for this operation say to honor a denied request.' :
+            'The rule found no denial instruction tied to this request.',
+          [block, approval, clause.index], guard);
+        const skip = scopedContext(block, clause, expressions.get(P.SKIP_CONSENT), anchor, 'approval');
+        if (skip) add('skip-consent', 'potential', 'high',
+          'Skipping consent can move execution outside the authority granted by the user.', [block, approval, clause.index], skip);
       }
+
+      const upload = sourceUpload.exec(value);
+      if (upload && !/\b(?:do not|never|must not|without)\s*$/i.test(value.slice(0, upload.index))) {
+        const approval = scopedContext(block, clause, uploadApproval, sourceUpload, 'upload');
+        if (approval) {
+          const fallback = scopedContext(block, clause, uploadFallback, sourceUpload, 'upload');
+          add('source-upload', 'capability', 'info',
+            'This workflow can send repository data after checking saved or explicit approval.',
+            [block, upload, clause.index], approval, fallback);
+        }
+      }
+
+      const silence = match(value, P.QUIET);
+      const material = match(value, P.MATERIAL);
+      if (silence && match(value, P.WORKFLOW) && (match(value, P.AUDIENCE) || match(value, P.ROUTINE)) &&
+          (material || match(text, P.ROUTINE)) && !negateConcealment.test(value)) {
+        add('withhold-activity', material ? 'potential' : 'transparency_signal', material ? 'high' : 'medium',
+          material ? 'The instruction can keep security-relevant activity from the user.' :
+            'The wording discourages reporting routine activity. Read it alongside the reporting requirements for this workflow.',
+          [block, clause], reportingContext(block, clause));
+      }
+      if (limited) break;
     }
 
-    const approval = match(text, P.APPROVAL);
-    if (approval) {
-      const guard = context(block, P.DENIAL);
-      add('elevated-execution', guard ? 'guarded' : 'potential', guard ? 'info' : 'high',
-        guard ? 'Nearby text says to honor a denied request.' : 'The rule found no nearby instruction to honor a denial.',
-        [block, approval], guard);
-      const skip = context(block, P.SKIP_CONSENT);
-      if (skip) add('skip-consent', 'potential', 'high',
-        'Skipping consent can move execution outside the authority granted by the user.', [block, approval], skip);
+    const receipt = acknowledge.exec(text);
+    const previous = block.group[block.index - 1];
+    if (receipt && previous && receiptRule.test(previous.text)) {
+      const fixed = match(previous.text, P.FIXED);
+      const validated = validatedReceipt.exec(previous.text);
+      if (fixed && validated) fixedReceipt = { command: [block, receipt], fixed: [previous, fixed], validated: [previous, validated] };
     }
-
     const binary = executable.exec(text);
     if (binary && !executableFinding?.preferred) {
       const call = context(block, calls);
@@ -198,38 +152,31 @@ export function scan(source, limit = maxFindings) {
       }
     }
 
-    const external = match(text, P.REVIEW_SOURCE);
-    const action = match(text, P.REVIEW_ACTION);
-    if (!externalReported && external && action) {
-      externalReported = true;
-      const guard = context(block, P.DATA_BOUNDARY, candidate =>
-        match(candidate.text, P.REVIEW_SOURCE) || !match(candidate.text, P.ADVISORY));
-      add('external-instructions', guard ? 'guarded' : 'potential', guard ? 'info' : 'medium',
-        guard ? 'Nearby text limits the authority of the external content.' :
-          'External text can carry instructions the user never authorized. The rule found no nearby boundary for treating that text as data.',
-        [block, external], [block, action], guard);
-    }
-
-    const material = quiet.some(clause => match(clause[0], P.MATERIAL));
-    if (quiet.length && (material || match(text, P.ROUTINE))) {
-      const primary = quiet.find(clause => match(clause[0], P.MATERIAL)) ?? quiet[0];
-      add('withhold-activity', material ? 'potential' : 'transparency_signal', material ? 'high' : 'medium',
-        material ? 'The instruction can keep security-relevant activity from the user.' :
-          'The wording discourages reporting routine activity. Read it alongside requirements to disclose material activity and errors.',
-        [block, primary], disclosure);
-    }
     const override = match(text, P.OVERRIDE);
     if (override && !negateOverride.test(text)) add('override-boundary', 'potential', 'high',
       'Following this instruction could displace the approval or policy that governs the action.', [block, override]);
     if (limited) break;
   }
 
-  if (executableFinding) {
+  if (!limited) for (const flow of externalFlows(blocks)) {
+    add('external-instructions', flow.boundary ? 'guarded' : 'potential', flow.boundary ? 'info' : 'medium',
+      flow.boundary ? 'The workflow limits how this external input may be used.' :
+        'External text can carry instructions the user never authorized. The rule found no data boundary tied to this input.',
+      flow.source, flow.action, flow.boundary);
+    if (limited) break;
+  }
+
+  if (fixedReceipt) {
+    add('supplied-executable', 'capability', 'info',
+      'A fixed local acknowledgement records receipt using the validated notice ID and revision.',
+      fixedReceipt.command, fixedReceipt.fixed, fixedReceipt.validated);
+  }
+  if (executableFinding && (!fixedReceipt || executableFinding.call[0] !== fixedReceipt.command[0])) {
     const { binary, call, trust } = executableFinding;
     add('supplied-executable', trust ? 'capability' : 'requires_provenance', 'info',
       'Trace who provides the executable path and how the host verifies its provenance.', binary, call, trust);
   }
-  const additional = scanSnykSignals(source, limit - findings.length);
+  const additional = scanSnykSignals(source, limit - findings.length, proseView(source, blocks));
   findings.push(...additional.findings);
   maskEvidence(findings, additional.secrets, source);
   findings.sort((a, b) => a.evidence[0].start - b.evidence[0].start);

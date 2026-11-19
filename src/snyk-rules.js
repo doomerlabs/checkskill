@@ -39,7 +39,8 @@ export function missingManifest() {
   return finding('missing-skill-manifest', 'The submitted folder has no SKILL.md at its root.', [], 'potential');
 }
 
-const roleOverride = /\b(?:ignore|disregard|forget|override|replace)\s+(?:(?:all|any|the|your|earlier|previous|prior|above|system|developer|original|existing)\s+){1,6}(?:instructions?|prompts?|rules?|directives?|constraints?)\b|(?:^|\n)[ \t]*(?:<\|(?:system|developer)\|>|\[(?:SYSTEM|DEVELOPER)\]|(?:SYSTEM|DEVELOPER) (?:MESSAGE|INSTRUCTIONS)\s*:)/gi;
+const roleOverride = /\b(?:ignore|disregard|forget|override|replace)[ \t]+(?:(?:all|any|the|your|earlier|previous|prior|above|system|developer|original|existing)[ \t]+){1,6}(?:instructions?|prompts?|rules?|directives?|constraints?)\b/gi;
+const roleMarker = /(?:^|\n)[ \t]*(?:<\|(?:system|developer)\|>|\[(?:SYSTEM|DEVELOPER)\]|(?:SYSTEM|DEVELOPER) (?:MESSAGE|INSTRUCTIONS)\s*:)/gi;
 const credentials = /\b(?:api[ _-]?(?:key|token)s?|access[ _-]?tokens?|auth(?:entication)?[ _-]?tokens?|refresh[ _-]?tokens?|bearer tokens?|private keys?|passwords?|credentials?|session cookies?|signing secrets?)\b/i;
 const unsafeHandling = /\b(?:print|echo|log|display|reveal|paste|include|embed|put|write|store|save|return|send|copy|share|expose|output)\b[^.!?;\r\n]{0,100}\b(?:api[ _-]?(?:key|token)s?|access[ _-]?tokens?|auth(?:entication)?[ _-]?tokens?|refresh[ _-]?tokens?|bearer tokens?|private keys?|passwords?|credentials?|session cookies?|signing secrets?)\b[^.!?;\r\n]{0,95}/gi;
 const unsafeDestination = /\b(?:verbatim|plain(?:[ -]?text)?|logs?|console|stdout|chat|messages?|repl(?:y|ies)|responses?|output|shell history|command(?:[- ]line)?|argument|prompt|world.readable|unprotected|external|public)\b/i;
@@ -52,7 +53,8 @@ const placeholder = /^(?:\$\{|\$[A-Z_]|<|\{\{|%[A-Z_])|\b(?:placeholder|redacted
 
 const payment = /\b(?:submit|initiate|authorize|execute|make|send|transfer|withdraw|place|sign|broadcast|charge|refund|pay)\b[^.!?;\r\n]{0,62}\b(?:payments?|funds|money|cash|bank transfers?|transactions?|market orders?|trades?|invoices?|credit cards?|customers?|cryptocurrency|crypto assets?|wallet transfers?)\b/gi;
 const publicData = /\b(?:browse|read|fetch|retrieve|load|search|analy[sz]e|summarize|process|follow|use|consume|ingest|inspect)\b[^.!?;\r\n]{0,85}\b(?:(?:arbitrary|user[- ]supplied) (?:urls?|websites?)|public (?:web(?:sites?| pages?)?|posts?|issues?|comments?|forums?|pages?|feeds?|social media)|social[- ]media(?: posts?| comments?)?|forum (?:posts?|comments?)|user[- ](?:submitted|generated|controlled) (?:content|data|posts?|comments?|input)|third[- ]party (?:content|api responses?|websites?|pages?|documents?)|external (?:content|api responses?|websites?|pages?|documents?)|issue tracker (?:comments?|posts?))\b/gi;
-const systemChange = /\b(?:systemctl\s+(?:start|stop|enable|disable|restart|mask|unmask|edit|daemon-reload)|launchctl\s+(?:load|unload|bootstrap|bootout|enable|disable)|(?:Enable|Disable|Start|Stop|Restart|Configure|Modify|Change|Edit|Update|Install|Create|Remove|Add|Delete|Grant|Revoke)\b[^.!?;\r\n]{0,70}\b(?:system(?:d)? services?|system service configuration|service on (?:boot|startup)|firewall|security (?:settings|configuration|polic(?:y|ies))|antivirus|host (?:users?|accounts?|permissions?)|system (?:users?|accounts?|permissions?|files)|startup (?:services?|items?|agents?|tasks?)|scheduled (?:system|startup) task)|(?:useradd|userdel|usermod)\b|(?:Set-Service|New-Service|sc\.exe)\s+[\w-]+)/gi;
+const systemChange = /\b(?:Enable|Disable|Start|Stop|Restart|Configure|Modify|Change|Edit|Update|Install|Create|Remove|Add|Delete|Grant|Revoke)\b[^.!?;\r\n]{0,70}\b(?:system(?:d)? services?|system service configuration|service on (?:boot|startup)|firewall|security (?:settings|configuration|polic(?:y|ies))|antivirus|host (?:users?|accounts?|permissions?)|system (?:users?|accounts?|permissions?|files)|startup (?:services?|items?|agents?|tasks?)|scheduled (?:system|startup) task)/gi;
+const systemCommand = /\b(?:systemctl[ \t]+(?:start|stop|enable|disable|restart|mask|unmask|edit|daemon-reload)|launchctl[ \t]+(?:load|unload|bootstrap|bootout|enable|disable)|(?:useradd|userdel|usermod)\b|(?:Set-Service|New-Service|sc\.exe)[ \t]+[\w-]+)/gi;
 const urlPattern = /\bhttps?:\/\/[^\s<>"'\x60|)]+/gi;
 const downloadAction = /\b(?:download|install|execute|launch|run|fetch|retrieve|load|pull|clone|curl|wget|Invoke-WebRequest|Invoke-RestMethod)\b/i;
 const runtimeUse = /\b(?:as (?:the |its )?(?:runbook|instructions?|prompts?|configuration)|(?:follow|obey|apply|execute|run|eval|source|load|install|import)\b[^.!?;\r\n]{0,55}\b(?:downloaded|fetched|returned|retrieved|remote|helper|script|binary|instructions?|runbook|contents?|package)|at runtime|on every (?:run|invocation)|latest release)\b/i;
@@ -96,7 +98,7 @@ function sourceLocation(source) {
   };
 }
 
-export function scanSnykSignals(source, limit) {
+export function scanSnykSignals(source, limit, prose) {
   const results = [];
   let locate;
   let limited = false;
@@ -110,10 +112,13 @@ export function scanSnykSignals(source, limit) {
     results.push(finding(id, reason, [locate(start, length, masked)], assessment));
   }
 
-  function scanMatches(id, pattern, reason, assessment, accepts = () => true) {
-    for (const match of source.matchAll(pattern)) {
-      if (!negated(source, match.index) && accepts(match)) {
-        add(id, match.index, match[0].length, reason, assessment);
+  function scanMatches(id, pattern, reason, assessment, accepts = () => true, raw = false) {
+    const text = raw ? source : prose.text;
+    for (const match of text.matchAll(pattern)) {
+      if (!negated(text, match.index) && accepts(match)) {
+        const start = raw ? match.index : prose.original(match.index);
+        const end = raw ? start + match[0].length : prose.original(match.index + match[0].length);
+        add(id, start, end - start, reason, assessment);
         if (limited) break;
       }
     }
@@ -139,24 +144,27 @@ export function scanSnykSignals(source, limit) {
     'The directive can place secret values in model-visible output, commands, or insecure storage.', 'potential',
     match => credentials.test(match[0]) && unsafeDestination.test(match[0]) && !safeCredential.test(match[0]));
   if (!limited) scanMatches('credential-handling', secretsToOutput,
-    'The command sends a secret-bearing environment variable to output.');
+    'The command sends a secret-bearing environment variable to output.', undefined, undefined, true);
   if (!limited) scanMatches('agent-role-override', roleOverride,
     'The matched text can steer the agent away from the instructions that govern it.');
+  if (!limited) scanMatches('agent-role-override', roleMarker,
+    'A role marker can make skill text look like a privileged instruction.', undefined, undefined, true);
   if (!limited) scanMatches('agent-role-override', encodedText,
     'Encoded text contains a directive that can replace the agent’s governing instructions.', 'potential', match => {
       // Decode only bounded candidates and check the text without rendering it.
       const length = match[0].length;
       if (length < 24 || length > 2048 || length % 4 !== 0) return false;
       try {
-        return [...atob(match[0]).matchAll(roleOverride)].length > 0;
+        const decoded = atob(match[0]);
+        return !decoded.matchAll(roleOverride).next().done || !decoded.matchAll(roleMarker).next().done;
       } catch {
         return false;
       }
-    });
+    }, true);
   if (!limited) scanMatches('dangerous-code-pattern', encodedExecution,
     'The instruction connects an encoded value to execution. Review the decoded content as text.');
   if (!limited) scanMatches('dangerous-code-pattern', unsafeExecution,
-    'The matched code passes freshly downloaded text into an interpreter.');
+    'The matched code passes freshly downloaded text into an interpreter.', undefined, undefined, true);
   if (!limited) scanMatches('dangerous-code-pattern', sensitiveTransfer,
     'The matched instruction directs sensitive values to an external destination.');
   if (!limited) scanMatches('dangerous-code-pattern', persistence,
@@ -168,7 +176,10 @@ export function scanSnykSignals(source, limit) {
   if (!limited) scanMatches('system-modification', systemChange,
     'This instruction can change host state. Review the permission boundary and the scope of the change.', 'capability');
 
-  if (!limited) for (const match of source.matchAll(urlPattern)) {
+  if (!limited) scanMatches('system-modification', systemCommand,
+    'This command can change host state. Review the permission boundary and the scope of the change.', 'capability', undefined, true);
+
+  if (!limited) for (const match of prose.text.matchAll(urlPattern)) {
     const urlText = match[0].replace(/[.,;:\]}]+$/, '');
     let url;
     try {
@@ -177,26 +188,29 @@ export function scanSnykSignals(source, limit) {
       continue;
     }
     const start = match.index;
-    const before = source.slice(Math.max(0, start - 170), start).split(/\n[ \t]*\n/).at(-1);
-    const after = source.slice(start + urlText.length, start + urlText.length + 165).split(/\n[ \t]*\n/, 1)[0];
+    const before = prose.text.slice(Math.max(0, start - 170), start).split(/\r\n|\r|\n/).at(-1);
+    const after = prose.text.slice(start + urlText.length, start + urlText.length + 165).split(/\r\n|\r|\n/, 1)[0];
     const actions = [...before.matchAll(new RegExp(downloadAction.source, 'gi'))];
     const action = actions.at(-1);
     if (!action || /[.!?;]\s/.test(before.slice(action.index + action[0].length)) ||
-        negated(source, start - before.length + action.index)) continue;
+        negated(prose.text, start - before.length + action.index)) continue;
+    const originalStart = prose.original(start);
+    const originalEnd = prose.original(start + urlText.length);
+    const originalLength = originalEnd - originalStart;
     const obscured = shortener.test(url.hostname) || downloadHost.test(url.hostname) || url.username !== '' ||
       /^\[|^\d+\.\d+\.\d+\.\d+$/.test(url.hostname);
     const executableArtifact = artifact.test(url.pathname) ||
       /^(?:install|execute|launch|run)$/i.test(action[0]) && /\b(?:helper|script|binary|executable)\b/i.test(before);
     const verified = /\b(?:verify|check|pin)\b[^.!?;\r\n]{0,65}\b(?:signature|checksum|sha-?256|digest|commit hash)\b/i.test(before + ' ' + after);
     if (obscured || (executableArtifact && (url.protocol !== 'https:' || !verified))) {
-      add('suspicious-download', start, urlText.length,
+      add('suspicious-download', originalStart, originalLength,
         obscured ? 'The destination obscures provenance or uses an intermediary download host.' :
           'The instruction references an executable or archive without an evident integrity check.');
     }
     const runtime = runtimeUse.test(before + ' ' + after) ||
       /^(?:install|execute|launch|run|load)$/i.test(action[0]) ||
-      /^\s*['"\x60]?\s*\|\s*(?:bash|sh|zsh|pwsh)\b/i.test(after);
-    if (runtime && !verified) add('runtime-dependency', start, urlText.length,
+      /^[ \t]*['"\x60]?[ \t]*\|[ \t]*(?:bash|sh|zsh|pwsh)\b/i.test(source.slice(originalEnd, originalEnd + 40));
+    if (runtime && !verified) add('runtime-dependency', originalStart, originalLength,
       'The referenced source can change after installation and affect the instructions or code the agent uses.');
     if (limited) break;
   }

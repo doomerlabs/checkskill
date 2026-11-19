@@ -176,7 +176,8 @@ function findingDetail(finding, index) {
     item.append(anchor, ' · ', element('code', '', reference.code));
     references.append(item);
   }
-  detail.append(rule, why, references);
+  detail.append(rule, why);
+  if (finding.references.length) detail.append(references);
   return detail;
 }
 
@@ -196,8 +197,8 @@ function showFindings({ status, scanned = false, limited = false } = {}) {
     meta.append(assessment);
     if (finding.path) meta.append(element('span', 'sp-result-path', finding.path));
     if (finding.evidence[0]) meta.append(element('span', '', lineLabel(finding.evidence[0])));
-    button.append(meta, element('span', 'sp-hit-name', finding.title),
-      element('span', 'sp-vendors', finding.references.map(item => item.name).join(' · ')));
+    button.append(meta, element('span', 'sp-hit-name', finding.title));
+    if (finding.references.length) button.append(element('span', 'sp-vendors', finding.references.map(item => item.name).join(' · ')));
     entry.append(button, findingDetail(finding, index));
     fragment.append(entry);
   }
