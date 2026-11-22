@@ -1,6 +1,9 @@
 import { externalFlows, reportingContext, scopedContext, clausesFor } from './workflows.js';
 import { evidence, markdownBlocks, proseView } from './markdown.js';
-import { maskEvidence, missingManifest, scanSnykSignals, snykReference } from './snyk-rules.js';
+import {
+  connectorArchiveFindings, invokedCheckoutFindings, templateResourceGateFindings, isPackagedSkillFixture, maskEvidence, missingManifest, reachableNodeScripts, scanSnykSignals, scopeSnykFindings,
+  snykReference, windowsExecutableFinding,
+} from './snyk-rules.js';
 import * as P from './patterns.js';
 
 const expressions = new Map(Object.values(P).map(pattern => [pattern, new RegExp(pattern, 'i')]));
@@ -13,6 +16,10 @@ const negateConcealment = /\b(?:never|do not|don't)\b.{0,90}\b(?:hide|omit|suppr
 const negateOverride = /\b(?:never|do not|don't|must not)\s+(?:ignore|override|disregard|bypass|sidestep)\b/i;
 const flowPattern = new RegExp(P.EXECUTE + "[\\s`:,\\-]+(?:[\\w'-]+[\\s`]+){0,5}" + P.COMMAND_INPUT, "i");
 const maxFindings = 100;
+const standardPackageFindings = 600;
+const standardPackageFiles = 128;
+const standardPackageBytes = 1024 * 1024;
+const encoder = new TextEncoder();
 const acknowledge = /\bwatch notice-ack\b/i;
 const receiptRule = /\b(?:manual receipt|manual acknowledgement)\b/i;
 const validatedReceipt = /\bvalidated ID and revision\b/i;
@@ -45,7 +52,7 @@ function context(block, pattern, filter = () => true) {
   }
 }
 
-export function scan(source, limit = maxFindings) {
+export function scan(source, limit = maxFindings, packagedSkillFixture = false) {
   const blocks = markdownBlocks(source);
   const findings = [];
   let limited = false;
@@ -179,25 +186,60 @@ export function scan(source, limit = maxFindings) {
     add('supplied-executable', trust ? 'capability' : 'requires_provenance', 'info',
       'Trace who provides the executable path and how the host verifies its provenance.', binary, call, trust);
   }
-  const additional = scanSnykSignals(source, limit - findings.length, proseView(source, blocks));
+  const additional = scanSnykSignals(source, limit - findings.length, proseView(source, blocks), blocks, packagedSkillFixture);
   findings.push(...additional.findings);
   maskEvidence(findings, additional.secrets, source);
   findings.sort((a, b) => a.evidence[0].start - b.evidence[0].start);
   return { engine: 'checkskill', findings, limited: limited || additional.limited };
 }
 
+export function isBinaryAsset({ path, content }) {
+  const hasBinaryHeader = (content.startsWith('icns') && /\.icns$/i.test(path)) ||
+    (content.startsWith('OggS') && /\.ogg$/i.test(path)) ||
+    (content.startsWith('PK\u0003\u0004') && /\.(?:docx|xlsx|hwpx)$/i.test(path));
+  return hasBinaryHeader && content.includes('\0');
+}
+
 export function scanPackage(files) {
-  const manifest = files.find(file => file.path === 'SKILL.md');
+  const bytes = files.reduce((size, file) => size + encoder.encode(file.content).byteLength, 0);
+  const tiers = Math.min(3, Math.ceil(Math.max(1, bytes / standardPackageBytes, files.length / standardPackageFiles)));
+  const limit = tiers * standardPackageFindings;
+  const sortedFiles = [...files].sort((a, b) => {
+    if (a.path === b.path) return 0;
+    return a.path < b.path ? -1 : 1;
+  });
+  const manifest = sortedFiles.find(file => file.path === 'SKILL.md');
+  const body = manifest?.content ?? '';
+  const nodeScripts = reachableNodeScripts(sortedFiles, body);
   const findings = manifest ? [] : [missingManifest()];
   let limited = false;
-  const ordered = manifest ? [manifest, ...files.filter(file => file !== manifest)] : files;
-  for (const { path, content } of ordered) {
-    const result = scan(content, maxFindings - findings.length);
-    for (const finding of result.findings) findings.push({ ...finding, path });
+  const ordered = manifest ? [manifest, ...sortedFiles.filter(file => file !== manifest)] : sortedFiles;
+  for (const file of ordered) {
+    const { path, content } = file;
+    const executableFinding = windowsExecutableFinding(file, sortedFiles);
+    if (executableFinding) {
+      if (findings.length === limit) {
+        limited = true;
+        break;
+      }
+      findings.push(executableFinding);
+      continue;
+    }
+    if (isBinaryAsset(file)) continue;
+    const result = scan(content, limit - findings.length, isPackagedSkillFixture(path, sortedFiles));
+    findings.push(...scopeSnykFindings(result.findings, path, body, nodeScripts, sortedFiles));
     if (result.limited) {
       limited = true;
       break;
     }
+  }
+
+  if (!limited && manifest) {
+    const readme = sortedFiles.find(file => file.path === 'README.md');
+    const linked = [...connectorArchiveFindings(body, readme?.content), ...invokedCheckoutFindings(body, sortedFiles), ...templateResourceGateFindings(body, sortedFiles)];
+    const remaining = limit - findings.length;
+    findings.push(...linked.slice(0, remaining));
+    limited = linked.length > remaining;
   }
   return { engine: 'checkskill', findings, limited };
 }

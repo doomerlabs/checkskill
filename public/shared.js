@@ -1,7 +1,11 @@
-export const maxSkillBytes = 64 * 1024;
-export const maxPackageFiles = 64;
+export const maxPackageBytes = 10 * 1024 * 1024;
+export const maxSkillBytes = maxPackageBytes;
+export const maxHighlightedSourceBytes = 64 * 1024;
+export const maxPackageFiles = 384;
+export const packageSizeLabel = '10 MiB';
 export const maxPathLength = 256;
-export const maxShareCharacters = 24000;
+const maxShareCharacters = 24000;
+const maxLegacyShareBytes = 64 * 1024;
 
 export async function decodeShare(fragment) {
   const prefix = '#skill=v1.';
@@ -22,7 +26,7 @@ export async function decodeShare(fragment) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > maxSkillBytes) throw new Error('This share link expands beyond the 64 KiB skill limit.');
+      if (size > maxLegacyShareBytes) throw new Error('This share link expands beyond the 64 KiB skill limit.');
       skill += decoder.decode(value, { stream: true });
     }
   } finally {

@@ -1,7 +1,13 @@
-import { maxPackageFiles, maxPathLength, maxSkillBytes, maxShareCharacters } from '../public/shared.js';
+import { maxPackageBytes, maxPackageFiles, maxPathLength, maxSkillBytes, packageSizeLabel } from '../public/shared.js';
+import { publicSkillInput } from '../public/skill-route.js';
 import { scan, scanPackage } from './rules.js';
+import { snykReportFromFindings } from './snyk-report.js';
+import { importGitHubSkill, listGitHubRefs } from './github.js';
+import { RequestError } from './request-error.js';
+import { createJsonTextCompactor } from './json-text.js';
 
-const maxRequest = (maxSkillBytes + maxPackageFiles * maxPathLength) * 6 + 4096;
+const maxScanRequest = (maxPackageBytes + maxPackageFiles * maxPathLength) * 6 + 4096;
+const maxRefsRequest = 16 * 1024;
 const encoder = new TextEncoder();
 
 const headers = {
@@ -11,26 +17,22 @@ const headers = {
   'X-Robots-Tag': 'noindex',
 };
 
-class RequestError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-
-async function readInput(request, allowPackage) {
+async function readInput(request, refsOnly) {
   const type = (request.headers.get('Content-Type') || '').split(';', 1)[0].trim().toLowerCase();
   const json = type === 'application/json';
+  if (refsOnly && !json) throw new RequestError(415, 'Send JSON with a githubUrl string.');
   if (!json && !['text/plain', 'text/markdown', 'application/octet-stream'].includes(type)) {
     throw new RequestError(415, 'Send text/plain or JSON with a skill string.');
   }
-  const limit = json ? maxRequest : maxSkillBytes;
+  const limit = refsOnly ? maxRefsRequest : json ? maxScanRequest : maxSkillBytes;
+  const sizeError = json ? 'The JSON request exceeds the size limit.' : `The skill can be at most ${packageSizeLabel}.`;
   if (Number(request.headers.get('Content-Length')) > limit) {
-    throw new RequestError(413, 'The skill can be at most 64 KiB.');
+    throw new RequestError(413, sizeError);
   }
   const reader = request.body?.getReader();
   if (!reader) throw new RequestError(400, 'The request body is empty.');
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: !json });
+  const compactor = json ? createJsonTextCompactor() : null;
   let length = 0;
   let text = '';
   try {
@@ -38,10 +40,14 @@ async function readInput(request, allowPackage) {
       const { done, value } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > limit) throw new RequestError(413, 'The skill can be at most 64 KiB.');
-      text += decoder.decode(value, { stream: true });
+      if (length > limit) throw new RequestError(413, sizeError);
+      for (let offset = 0; offset < value.length; offset += 64 * 1024) {
+        const decoded = decoder.decode(value.subarray(offset, offset + 64 * 1024), { stream: true });
+        text += compactor ? compactor.append(decoded) : decoded;
+      }
     }
-    text += decoder.decode();
+    const finalText = decoder.decode();
+    text += compactor ? compactor.append(finalText) + compactor.finish() : finalText;
     if (json) text = JSON.parse(text);
   } catch (error) {
     await reader.cancel().catch(() => {});
@@ -50,10 +56,15 @@ async function readInput(request, allowPackage) {
   } finally {
     reader.releaseLock();
   }
-  if (json && text && Object.hasOwn(text, 'files')) {
-    if (!allowPackage || Object.hasOwn(text, 'skill')) {
-      throw new RequestError(400, 'Folder input is supported by /api/scan. Send either files or a skill string.');
+  if (json && text && Object.hasOwn(text, 'githubUrl')) {
+    if (Object.hasOwn(text, 'skill') || Object.hasOwn(text, 'files')) {
+      throw new RequestError(400, 'Send a repository reference or skill content.');
     }
+    return { githubUrl: text.githubUrl, ref: text.ref };
+  }
+  if (refsOnly) throw new RequestError(400, 'Provide githubUrl to list revisions.');
+  if (json && text && Object.hasOwn(text, 'files')) {
+    if (Object.hasOwn(text, 'skill')) throw new RequestError(400, 'Send either files or a skill string.');
     return readPackage(text.files);
   }
   if (json) text = text?.skill;
@@ -63,7 +74,7 @@ async function readInput(request, allowPackage) {
   // Normalize lone JSON surrogate escapes the same way UTF-8 encoders do.
   text = text.toWellFormed();
   if (encoder.encode(text).byteLength > maxSkillBytes) {
-    throw new RequestError(413, 'The skill can be at most 64 KiB.');
+    throw new RequestError(413, `The skill can be at most ${packageSizeLabel}.`);
   }
   return text;
 }
@@ -72,7 +83,7 @@ function readPackage(files) {
   if (!Array.isArray(files) || !files.length) {
     throw new RequestError(400, 'Provide a nonempty files array.');
   }
-  if (files.length > maxPackageFiles) throw new RequestError(413, 'Folders can contain up to 64 text files.');
+  if (files.length > maxPackageFiles) throw new RequestError(413, `Folders can contain up to ${maxPackageFiles} text files.`);
   let total = 0;
   const seen = new Set();
   return files.map(file => {
@@ -87,29 +98,21 @@ function readPackage(files) {
     seen.add(path);
     const content = file.content.toWellFormed();
     total += encoder.encode(content).byteLength;
-    if (total > maxSkillBytes) throw new RequestError(413, 'Folder text can be at most 64 KiB in total.');
+    if (total > maxPackageBytes) throw new RequestError(413, `Folder text can be at most ${packageSizeLabel} in total.`);
     return { path, content };
   });
-}
-
-async function shareUrl(skill, origin) {
-  const stream = new Blob([skill]).stream().pipeThrough(new CompressionStream('gzip'));
-  const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
-  // Reject before spreading a large array into a single function call.
-  if (compressed.length > maxShareCharacters * 3 / 4) {
-    throw new RequestError(413, 'This skill is too large for a share link. You can still scan it.');
-  }
-  const encoded = btoa(String.fromCharCode(...compressed)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  return origin + '/#skill=v1.' + encoded;
 }
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    if (['GET', 'HEAD'].includes(request.method) && publicSkillInput(url.pathname, url.search)) {
+      return env.ASSETS.fetch(request);
+    }
 
     try {
-      if (!['/api/scan', '/api/share', '/api/open'].includes(url.pathname)) {
+      if (!['/api/scan', '/api/refs'].includes(url.pathname)) {
         throw new RequestError(404, 'API endpoint not found.');
       }
       if (request.method !== 'POST') {
@@ -117,12 +120,14 @@ export default {
       }
       const origin = request.headers.get('Origin');
       if (origin && origin !== url.origin) throw new RequestError(403, 'This request must come from the same site.');
-      const isScan = url.pathname === '/api/scan';
-      const skill = await readInput(request, isScan);
-      if (isScan) return Response.json(typeof skill === 'string' ? scan(skill) : scanPackage(skill), { headers });
-      const link = await shareUrl(skill, url.origin);
-      if (url.pathname === '/api/share') return Response.json({ url: link }, { headers });
-      return new Response(link + '\n', { headers: { ...headers, 'Content-Type': 'text/plain; charset=utf-8' } });
+      const refsOnly = url.pathname === '/api/refs';
+      const skill = await readInput(request, refsOnly);
+      if (refsOnly) return Response.json(await listGitHubRefs(skill.githubUrl, request.signal), { headers });
+      const imported = typeof skill === 'object' && Object.hasOwn(skill, 'githubUrl') ?
+        await importGitHubSkill(skill.githubUrl, request.signal, skill.ref) : undefined;
+      const input = imported ? readPackage(imported.files) : skill;
+      const result = typeof input === 'string' ? scan(input) : scanPackage(input);
+      return Response.json({ ...result, snykForecast: snykReportFromFindings(result), ...imported }, { headers });
     } catch (error) {
       const expected = error instanceof RequestError;
       return Response.json({ error: expected ? error.message : 'The request could not be completed.' },

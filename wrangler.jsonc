@@ -5,6 +5,6 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "checkskill.ai", "custom_domain": true }],
-  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*"], "not_found_handling": "single-page-application" },
   "observability": { "enabled": false, "logs": { "enabled": false }, "traces": { "enabled": false } }
 }

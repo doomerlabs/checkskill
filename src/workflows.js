@@ -12,6 +12,28 @@ const disclosureSubject = /\b(?:activity|advisories|approval|changes|concerns|co
 const userAudience = /\b(?:to (?:the )?(?:user|operator|reader)|(?:in|as part of) (?:the |your )?(?:final (?:reply|response|answer)|user-facing (?:reply|response|answer))|(?:tell|inform|notify|show) (?:the )?(?:user|operator|reader))\b/i;
 const internalAudience = /\b(?:to|via|in|into|through) (?:the )?(?:(?:review|analysis|internal|local) )?(?:tools?|services?|logs?|telemetry|tool output)\b/i;
 const deliverAdvisories = /\bdeliver (?:required )?(?:service )?advisories and\s*$/i;
+const cloneLine = /^[ \t]*git clone\s+[^\r\n]{1,260}\r?$/gim;
+const ignoresCloneFailure = /\|\|\s*(?:true\b|:(?=\s|$))/i;
+const sharedCheckout = /\s+['"]?((?:\/(?:private\/)?tmp\/|\$\{?TMPDIR\}?\/)[\w./-]{2,145})['"]?(?=\s|$)/i;
+const checkedArtifact = /\b(?:sha256sum\s+-c\b|verify\b[^\r\n;]{0,65}\b(?:checksum|signature|commit|revision)\b)/i;
+
+export function* uncheckedCheckoutFallbacks(source) {
+  for (const match of source.matchAll(cloneLine)) {
+    const command = match[0];
+    if (!/https?:\/\/\S+/i.test(command) || !ignoresCloneFailure.test(command)) continue;
+    const path = sharedCheckout.exec(command)?.[1].replace(/\/+$/, '');
+    if (!path) continue;
+    const escaped = path.replace(/[.*+?^$${}()|[\]\\]/g, '\\$&');
+    const invocation = new RegExp(
+      `^[ \t]*(?:(?:bash|sh|pwsh|python3?|node)[ \t]+)?["']?${escaped}/[\\w./-]+(?=[\\s"']|$)`, 'im');
+    const position = match.index + command.length;
+    const next = source.slice(position, position + 530);
+    const executed = invocation.exec(next);
+    if (!executed || checkedArtifact.test(next.slice(0, executed.index))) continue;
+    const end = position + executed.index + executed[0].length;
+    yield { start: match.index, length: end - match.index };
+  }
+}
 
 export function clausesFor(block) {
   return block.clauses ??= [...block.text.matchAll(/\S[\s\S]*?(?:[.!?;](?=\s|$)|$)/g)];

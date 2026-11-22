@@ -3,32 +3,94 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A free preflight for agent skills. Paste or upload a SKILL.md and see explainable findings as you edit.">
+  <meta name="description" content="Preview what Snyk might flag in an agent skill before you install or publish it. Review the source evidence behind each finding.">
   <title>CheckSkill · Preflight for agent skills</title>
+  <script src="/route-start.js"></script>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body id="checkskill">
   <header class="sp-brand">
     <a class="sp-home" href="/"><span class="sp-logo" aria-hidden="true">✓</span><strong>CheckSkill</strong></a>
-    <nav aria-label="Site"><a href="#terminal">Terminal</a><a href="#about">About</a></nav>
+    <nav aria-label="Site"><a href="/about">How it works</a><a href="/terminal">Terminal</a><a href="/agent-skill">Agent skill</a></nav>
   </header>
   <main>
-    <section class="sp-intro">
-      <h1>Preflight for agent skills.</h1>
-      <p>Paste a <code>SKILL.md</code> or upload a skill folder to see what might get flagged before you publish or install it.</p>
+    <section id="sp-route-state" class="sp-route-state" aria-labelledby="sp-route-title" hidden>
+      <div class="sp-scan-dialog-head">
+        <span id="sp-route-spinner" class="sp-scan-spinner" aria-hidden="true"></span>
+        <div>
+          <h1 id="sp-route-title">Loading skill forecast…</h1>
+          <p id="sp-route-error" role="status" hidden></p>
+        </div>
+      </div>
+      <div id="sp-route-actions" class="sp-tools" hidden>
+        <button type="button" id="sp-route-retry" class="sp-tool">Try again</button>
+        <a href="/">Start a new scan</a>
+      </div>
     </section>
-    <div class="sp-workspace">
+    <section id="sp-intro" class="sp-intro">
+      <h1>See what Snyk might flag.</h1>
+      <p>Preview your agent skill’s security audit before you install or publish it.</p>
+      <div class="sp-scan-modes" aria-label="Skill input">
+        <button id="sp-public-mode" class="sp-tool" type="button" aria-pressed="true">Public skill</button>
+        <button id="sp-local-mode" class="sp-tool" type="button" aria-pressed="false">Paste or upload</button>
+      </div>
+      <form id="sp-public-form" class="sp-public-form">
+        <label for="sp-public-url">Public skill URL or install command</label>
+        <div class="sp-public-field">
+          <input id="sp-public-url" type="text" required maxlength="2048" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="sp-public-help" placeholder="github.com/org/repo/skills/directory">
+          <button id="sp-public-submit" type="submit" class="sp-tool">Scan skill</button>
+        </div>
+        <div class="sp-public-actions">
+          <p id="sp-public-help">Use a Skills.sh link, GitHub file or pull request, public Gist, or <code>npx skills add</code> command.</p>
+          <button type="button" id="sp-github-button" class="sp-link-button" aria-haspopup="dialog">Choose revision</button>
+        </div>
+        <p id="sp-public-status" role="status"></p>
+      </form>
+      <p class="sp-forecast-note">Our rules draw on published Snyk audits. Each forecast shows the source lines behind the findings.</p>
+      <p class="sp-free-note">Free to use. No account needed.</p>
+    </section>
+    <section id="sp-public-result" class="sp-public-result" hidden>
+      <a id="sp-result-back" href="/">← New scan</a>
+      <div class="sp-result-heading"><p id="sp-result-project"></p><h1 id="sp-result-title"></h1><p id="sp-result-revision"></p></div>
+      <div id="sp-result-overview" class="sp-result-overview">
+        <section class="sp-audit-preview">
+          <span class="sp-preview-label">CheckSkill preview</span>
+          <h2>Security audit preview</h2>
+          <div class="sp-quick-audit sp-upcoming"><strong>Gen Agent Trust Hub</strong><span>Preview coming soon</span></div>
+          <div class="sp-quick-audit sp-upcoming"><strong>Socket</strong><span>Preview coming soon</span></div>
+          <a id="sp-snyk-link" class="sp-quick-audit" href="/"><strong>Snyk forecast</strong><span id="sp-snyk-summary"></span><span>View report →</span></a>
+        </section>
+        <div class="sp-result-context">
+          <section id="sp-result-install" hidden><h2>Installation</h2><pre><code id="sp-install-command"></code></pre><button type="button" class="sp-tool" id="sp-copy-command">Copy command</button></section>
+          <section id="sp-result-description-section" hidden><h2>Summary</h2><p id="sp-result-description"></p></section>
+          <section><h2>Source</h2><p id="sp-result-files"></p><a id="sp-result-source" href="/">View source ↗</a> <a id="sp-published-listing" href="/" hidden>Published listing ↗</a></section>
+        </div>
+      </div>
+      <section id="sp-full-report" class="sp-full-report" hidden>
+        <header class="sp-report-head">
+          <div><span class="sp-preview-label">CheckSkill preview</span><h2>Snyk forecast</h2><p id="sp-report-count"></p></div>
+          <a id="sp-published-snyk" href="/" hidden>Published Snyk audit ↗</a>
+        </header>
+        <div id="sp-report-findings"></div>
+      </section>
+      <details id="sp-source-toggle" class="sp-source-toggle"><summary>Inspect source and local evidence</summary></details>
+    </section>
+    <div id="sp-workspace" class="sp-workspace" hidden>
       <section class="sp-source" aria-label="Skill editor">
         <header class="sp-panel-head">
           <label for="sp-editor" id="sp-editor-label" class="sp-file">SKILL.md</label>
           <div class="sp-tools">
-            <button type="button" id="sp-example" class="sp-tool">Load example</button>
-            <button type="button" id="sp-upload" class="sp-tool">Upload file</button>
+            <div id="sp-upload-group" class="sp-upload-group">
+              <button type="button" id="sp-upload" class="sp-tool" aria-label="Upload file">Upload</button>
+              <button type="button" id="sp-upload-toggle" class="sp-tool" aria-label="Upload options" aria-expanded="false" aria-controls="sp-upload-options"><span aria-hidden="true"></span></button>
+              <div id="sp-upload-options" class="sp-upload-options" hidden>
+                <button type="button" id="sp-file-button">Upload file</button>
+                <button type="button" id="sp-folder-button">Upload folder</button>
+              </div>
+            </div>
             <input id="sp-file" type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden>
-            <button type="button" id="sp-folder-button" class="sp-tool">Upload folder</button>
             <input id="sp-folder" type="file" webkitdirectory multiple hidden>
-            <button type="button" id="sp-share" class="sp-tool sp-share" disabled>Share</button>
           </div>
         </header>
         <div id="sp-folder-files" class="sp-folder-files" hidden>
@@ -42,59 +104,94 @@
         </div>
         <footer class="sp-panel-foot">
           <span id="sp-line-count">0 lines</span>
-          <span>We process your skill to return findings, then discard it.</span>
         </footer>
         <p id="sp-folder-status" class="sp-folder-note" hidden></p>
         <p id="sp-file-status" class="sp-message" role="status" hidden></p>
       </section>
-      <section class="sp-findings" aria-labelledby="sp-findings-title">
-        <header class="sp-panel-head">
-          <h2 id="sp-findings-title">Findings <span id="sp-count" hidden></span></h2>
-          <span class="sp-live"><span></span> Live</span>
-        </header>
-        <p class="sp-source-note">CheckSkill rules with references to published scanner checks.</p>
-        <div id="sp-finding-list" class="sp-finding-list"><p class="sp-empty">Paste or upload a skill to see findings here.</p></div>
+      <section id="findings" class="sp-findings" aria-label="Scanner results" tabindex="-1">
+        <div id="sp-finding-list">
+          <details class="sp-scanner" id="sp-gen">
+            <summary><span>Gen Agent Trust Hub</span><span class="sp-scan-status">Local evidence</span></summary>
+            <div class="sp-scanner-body"></div>
+          </details>
+          <details class="sp-scanner" id="sp-socket">
+            <summary><span>Socket</span><span class="sp-scan-status">No forecast</span></summary>
+            <div class="sp-scanner-body"></div>
+          </details>
+          <details class="sp-scanner" id="sp-snyk" open>
+            <summary><span>Snyk forecast</span><span class="sp-scan-status">Awaiting input</span></summary>
+            <div class="sp-scanner-body"></div>
+          </details>
+        </div>
+        <p id="sp-scan-note" class="sp-scan-note" hidden></p>
         <p id="sp-status" class="sp-sr" aria-live="polite" aria-atomic="true"></p>
       </section>
     </div>
 
-    <div class="sp-guides">
-      <section id="terminal">
-        <h2>Use CheckSkill from your terminal</h2>
+    <div id="sp-guides" class="sp-guides" hidden>
+      <section id="terminal" hidden>
+        <h1>Scan from the terminal</h1>
         <p>Send your Markdown as the request body to get JSON findings.</p>
         <pre><code>curl --fail-with-body -sS \
   -H 'Content-Type: text/markdown' \
   --data-binary @SKILL.md \
   https://checkskill.ai/api/scan</code></pre>
-        <p>On macOS, create an unlisted link and open the skill in your browser. Use <code>xdg-open</code> on Linux.</p>
-        <pre><code>link=$(curl -fsS \
-  -H 'Content-Type: text/markdown' \
-  --data-binary @SKILL.md \
-  https://checkskill.ai/api/open) &amp;&amp; open "$link"</code></pre>
-        <p>Use <code>POST /api/share</code> to get the same link in JSON. All three routes also accept <code>application/json</code> with a <code>skill</code> string. For a folder scan, send JSON with a <code>files</code> array of <code>{path, content}</code> objects. Submit up to 64 text files with paths relative to the folder and 64 KiB of text total. Share links have a separate 24,000-character limit for the compressed source in the URL.</p>
+        <p>For folders, send JSON with a <code>files</code> array of <code>{path, content}</code> objects. Scans accept up to 10 MiB of text and 384 files.</p>
       </section>
-      <section id="about">
-        <h2>Why CheckSkill exists</h2>
-        <p>A skill can tell an agent what to run, which content to trust, and what to report to you. CheckSkill highlights instructions worth checking before you publish or install a skill. It’s free and works without an account.</p>
-        <p>Skills.sh publishes audits from Gen Agent Trust Hub, Socket, and Snyk. Those hosted classifiers run on their providers’ infrastructure. CheckSkill runs its own rules on the exact text you provide, including unpublished revisions, and shows the passages behind each finding. The references point to related checks from other scanners. A clear scan only means these rules found no matches. <a href="https://www.skills.sh/audits">Skills.sh audits</a></p>
-        <p>Snyk also offers a CLI that reads local files and sends them to its hosted analysis service. <a href="https://github.com/snyk/agent-scan/blob/main/docs/scanning.md">Snyk scanning documentation</a></p>
+      <section id="agent-skill" hidden>
+        <h1>CheckSkill agent skill</h1>
+        <p>Install this skill to have your agent check a skill folder, fix actionable findings, and scan it again after edits.</p>
+        <pre><code>npx skills add https://github.com/doomerlabs/skills --skill check-skill</code></pre>
+        <a href="https://github.com/doomerlabs/skills/tree/main/skills/check-skill">View skill source on GitHub ↗</a>
       </section>
     </div>
+    <article id="sp-method" class="sp-intro sp-method" hidden>
+      <h1>How CheckSkill works</h1>
+      <p>Check the exact revision you’re about to install or publish.</p>
+      <section><h2>From published audits to deterministic checks</h2><p>We study public Snyk reports on Skills.sh, look for recurring patterns, and write rules that flag those patterns in skill files. CheckSkill shows the passages behind its findings, so you can review the evidence and rerun the same checks after an edit.</p></section>
+      <section><h2>What the forecast means</h2><p>CheckSkill predicts what Snyk might flag. It can miss findings or flag additional issues. Skills.sh publishes the original audits from each provider. <a href="https://www.skills.sh/audits">About Skills.sh audits ↗</a></p></section>
+      <section><h2>Why it’s free</h2><p>Each scan runs rules without a model call. That keeps scans inexpensive enough to offer for free, with no account required.</p></section>
+    </article>
   </main>
-  <footer class="sp-site-foot"><a href="https://github.com/doomerlabs/checkskill">Source on GitHub</a></footer>
+  <footer class="sp-site-foot">
+    <div><strong>Brought to you by Doomer.ai</strong><p>Free code reviews inside your agent’s coding loop.</p></div>
+    <nav aria-label="Footer">
+      <a href="https://doomer.ai/">Get free quick reviews ↗</a>
+      <a href="https://github.com/doomerlabs/checkskill">Source on GitHub</a>
+    </nav>
+  </footer>
 
-  <dialog id="sp-share-dialog" aria-labelledby="sp-share-title">
-    <form method="dialog" class="sp-dialog-form">
-      <h2 id="sp-share-title">Share an unlisted link</h2>
-      <p>The link itself contains your skill. Anyone with the link can read it. Share links allow up to 24,000 characters of compressed, encoded source in the URL, separate from the 64 KiB scan limit.</p>
-      <p id="sp-share-status" role="status" hidden></p>
-      <label id="sp-link-label" hidden>Share link<input id="sp-link" type="text" readonly spellcheck="false"></label>
+  <dialog id="sp-scan-dialog" aria-labelledby="sp-scan-title" aria-describedby="sp-scan-description">
+    <div class="sp-scan-dialog-head">
+      <span class="sp-scan-spinner" aria-hidden="true"></span>
+      <div>
+        <h2 id="sp-scan-title">Scanning skill…</h2>
+        <p id="sp-scan-description">Reading the skill files and checking what Snyk might flag.</p>
+      </div>
+    </div>
+    <div class="sp-tools">
+      <button type="button" id="sp-scan-cancel" class="sp-tool" autofocus>Cancel scan</button>
+    </div>
+  </dialog>
+
+  <dialog id="sp-github-dialog" aria-labelledby="sp-github-title">
+    <form id="sp-github-form" class="sp-dialog-form">
+      <h2 id="sp-github-title">Choose a skill revision</h2>
+      <label>Skill URL or install command
+        <input id="sp-github-url" type="text" required maxlength="2048" spellcheck="false" autocomplete="off" autofocus placeholder="github.com/org/repo/skills/directory">
+      </label>
+      <p id="sp-github-source" hidden></p>
+      <label id="sp-github-ref-row" hidden>Branch, tag, or commit
+        <input id="sp-github-ref" type="text" list="sp-github-branches" maxlength="256" spellcheck="false" autocomplete="off" placeholder="Type a branch, tag, or commit">
+        <datalist id="sp-github-branches"></datalist>
+      </label>
+      <p id="sp-github-status" role="status" hidden></p>
       <div class="sp-tools">
-        <button class="sp-tool" autofocus>Close</button>
-        <button type="button" id="sp-generate" class="sp-tool sp-share">Create link</button>
-        <button type="button" id="sp-copy" class="sp-tool sp-share" hidden>Copy link</button>
+        <button type="button" id="sp-github-cancel" class="sp-tool">Cancel</button>
+        <button type="submit" id="sp-github-submit" class="sp-tool sp-primary">Choose revision</button>
       </div>
     </form>
   </dialog>
+
 </body>
 </html>

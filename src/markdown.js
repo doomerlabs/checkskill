@@ -2,6 +2,7 @@ export function markdownBlocks(source) {
   const blocks = [];
   let group = [];
   let section = '';
+  let sectionPath = [];
   let fence = null;
   let frontmatter = false;
   let buffer = [];
@@ -19,7 +20,7 @@ export function markdownBlocks(source) {
       length += entry.text.length + 1;
     }
     const block = {
-      section, group, index: group.length, line: buffer[0].line,
+      section, sectionPath: sectionPath.filter(Boolean), group, index: group.length, line: buffer[0].line,
       text: buffer.map(entry => entry.text).join(' '), entries: buffer,
     };
     group.push(block);
@@ -44,15 +45,17 @@ export function markdownBlocks(source) {
       fence = fence ? null : marker[1];
       continue;
     }
-    const heading = !fence && /^\s*#{1,6}\s+(.+)$/.exec(raw);
+    const heading = !fence && /^\s*(#{1,6})\s+(.+)$/.exec(raw);
     const code = Boolean(fence) || (!buffer.length && /^(?: {4}|\t)/.test(raw));
     if (heading || !text || code || (!fence && /^(?:[-*+]|\d+[.)])\s/.test(text))) flush();
     if (heading) {
-      section = heading[1];
+      section = heading[2];
+      sectionPath = sectionPath.slice(0, heading[1].length - 1);
+      sectionPath[heading[1].length - 1] = section;
       group = [];
       continue;
     }
-    if (text) buffer.push({ line, text, rowStart: row.index, start: row.index + raw.indexOf(text) });
+    if (text) buffer.push({ line, text, code, rowStart: row.index, start: row.index + raw.indexOf(text) });
     if (code || /(?: {2,}|\\)$/.test(raw)) flush();
   }
   flush();

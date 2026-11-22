@@ -4,6 +4,14 @@ CheckSkill is a free, no-login preflight for agent skills. Paste, edit, or uploa
 
 [Skills.sh publishes partner audits](https://www.skills.sh/audits) from Gen Agent Trust Hub, Socket, and Snyk. CheckSkill can check the exact unpublished revision immediately using independent, deterministic rules ported from the offline Markdown audit. CheckSkill’s findings are its own. A clean scan means the rules found no matches. Snyk’s [agent-scan CLI](https://github.com/snyk/agent-scan/blob/main/docs/scanning.md) reads local files and sends them to Snyk’s hosted analysis.
 
+## Agent skill
+
+Install the published skill to have your agent scan a skill folder and recheck it after edits.
+
+```sh
+npx skills add https://github.com/doomerlabs/skills --skill check-skill
+```
+
 ## Terminal
 
 Return JSON findings from a Markdown file.
@@ -14,23 +22,20 @@ curl --fail-with-body -sS \
   --data-binary @SKILL.md https://checkskill.ai/api/scan
 ```
 
-Open a prefilled editor on macOS. Use `xdg-open` on Linux.
-
-```sh
-link=$(curl -fsS \
-  -H 'Content-Type: text/markdown' \
-  --data-binary @SKILL.md https://checkskill.ai/api/open) && open "$link"
-```
-
-All three endpoints accept UTF-8 Markdown (`text/markdown`, `text/plain`, or `application/octet-stream`) or `application/json` with a `skill` string.
+The scan endpoint accepts UTF-8 Markdown (`text/markdown`, `text/plain`, or `application/octet-stream`) or `application/json` with a `skill` string.
 
 | Route | Response |
 | --- | --- |
-| `POST /api/scan` | JSON with `engine`, `findings`, and `limited` |
-| `POST /api/share` | JSON with a `url` string |
-| `POST /api/open` | A plain-text share URL followed by a newline |
+| `POST /api/scan` | JSON with `engine`, `findings`, `limited`, and `snykForecast` |
+| `POST /api/refs` | The repository, default revision, and branch suggestions for the input |
 
 For a folder scan, POST JSON such as `{"files":[{"path":"SKILL.md","content":"# Example"},{"path":"scripts/setup.sh","content":"# Setup"}]}` to `/api/scan`. Paths must be unique and relative to the skill directory. Package findings include a `path` and file-relative offsets. A missing-manifest finding has no file or source span. Folder uploads scan UTF-8 text and report skipped files. Archive and binary contents are outside the scan's scope.
+
+Paste a public Skills.sh or GitHub link, Gist, or `npx skills add ... --skill ...` command. **Choose revision** lets you enter a branch, tag, or commit. A repository import scans the selected skill folder’s UTF-8 files and reports the exact commit. Use a GitHub folder URL if several folders share the same name.
+
+For API imports, send `{"githubUrl":"https://skills.sh/owner/repo/skill"}` to `/api/refs` to look up branch suggestions. Send the same input to `/api/scan` with an optional `ref`, such as `"feature/preview"`. The scan also returns `files` and `source`.
+
+The deterministic `snykForecast.issues` array contains predicted Snyk `code`, `severity`, and `message` values. `possible` lists lower-confidence codes. Check `limited` and `unmapped` before relying on an empty `issues` array. The forecast is an estimate of the published audit.
 
 Each finding includes a local rule ID, an assessment, a severity, an explanation, related scanner checks, and one or more evidence spans. Offsets use UTF-16 code units, with an inclusive `start` and exclusive `end`. Line and column numbers start at 1. The scan returns up to 100 findings and sets `limited` when additional findings are omitted. Errors return a non-success HTTP status and JSON with an `error` field.
 
@@ -52,13 +57,13 @@ CheckSkill has independent rules linked to all ten skill indicators in [Snyk’s
 | `missing_skill_md` (W014) | No root manifest in a submitted skill folder |
 | Hidden Unicode (W021, legacy) | Invisible format or control characters |
 
-These checks analyze text and do not fetch URLs, verify credential validity, or execute supplied files. Scanner references describe related Snyk indicators. CheckSkill uses its own evidence and does not reproduce Snyk’s hosted classifiers or scoring.
+The checks analyze text. GitHub import fetches public files from the selected skill folder. Scanner references describe related Snyk indicators. CheckSkill uses its own evidence to forecast issues from the given source.
 
 ## Privacy and limits
 
 The Worker receives skills to process requests and discards the text and findings after responding. API responses carry `Cache-Control: no-store`. There are no database or storage bindings, analytics scripts, or application request-body logs. Worker observability is disabled in the Wrangler configuration.
 
-The scan limit is 64 KiB of UTF-8 source, across up to 64 files for a folder scan. Findings mask detected credential literals while preserving their source offsets. The submitted source reaches the Worker before masking. Share links have a separate limit of 24,000 base64url characters for the gzipped source. Share links support single-file scans. The unlisted link itself contains the skill in its URL fragment. Anyone with the link can read it. Opening a link fills the editor and triggers a scan.
+Single-file, folder, and GitHub scans accept up to 10 MiB of UTF-8 text. Folders can contain up to 384 text files. Findings mask detected credential literals while preserving their source offsets. The submitted source reaches the Worker before masking. Existing share links still open in the editor.
 
 ## Develop and deploy
 
@@ -70,4 +75,4 @@ npm test
 npm run dev
 ```
 
-Deploy with `npm run deploy` after authenticating Wrangler and setting `CLOUDFLARE_ACCOUNT_ID` to the verified replicated.com Cloudflare account. The `checkskill.ai` zone must be active in that account. Wrangler attaches the Worker to the custom domain configured in [wrangler.jsonc](./wrangler.jsonc). See [Cloudflare’s custom-domain documentation](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
+`npm run deploy` deploys the production Worker configured in `wrangler.jsonc`.
