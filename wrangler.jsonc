@@ -6,5 +6,11 @@
   "preview_urls": false,
   "routes": [{ "pattern": "checkskill.ai", "custom_domain": true }],
   "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": ["/api/*"], "not_found_handling": "single-page-application" },
+  "d1_databases": [{
+    "binding": "SCAN_ANALYTICS",
+    "database_name": "checkskill-analytics",
+    "database_id": "5501b55b-038f-46b5-9b38-0089646c58a9",
+    "migrations_dir": "./d1/migrations"
+  }],
   "observability": { "enabled": false, "logs": { "enabled": false }, "traces": { "enabled": false } }
 }

@@ -344,12 +344,15 @@ function showFindings({ status, scanned = false, limited = false, forecast } = {
   if ($('sp-status').textContent !== announcement) message($('sp-status'), announcement);
 }
 
-async function api(route, source, controller) {
+async function api(route, source, controller, inputType) {
   const markdown = typeof source === 'string';
   const response = await fetch('/api/' + route, {
     method: 'POST',
     cache: 'no-store',
-    headers: { 'Content-Type': markdown ? 'text/markdown; charset=utf-8' : 'application/json' },
+    headers: {
+      'Content-Type': markdown ? 'text/markdown; charset=utf-8' : 'application/json',
+      ...(inputType === 'file' ? { 'X-CheckSkill-Input-Type': 'file' } : {}),
+    },
     body: markdown ? source : JSON.stringify(source),
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]),
   });
@@ -358,7 +361,7 @@ async function api(route, source, controller) {
   return data;
 }
 
-function queueScan() {
+function queueScan(inputType) {
   const current = ++revision;
   clearTimeout(scanTimer);
   scanRequest?.abort();
@@ -384,7 +387,7 @@ function queueScan() {
     const controller = new AbortController();
     scanRequest = controller;
     try {
-      const data = await api('scan', entries ? { files: entries } : source, controller);
+      const data = await api('scan', entries ? { files: entries } : source, controller, inputType);
       if (current !== revision) return;
       findings = data.findings;
       paintSource(editor.value);
@@ -416,14 +419,14 @@ function showFile(path) {
   paintSource(editor.value);
 }
 
-function replaceSource(source) {
+function replaceSource(source, inputType) {
   packageFiles = undefined;
   activePath = undefined;
   $('sp-editor-label').textContent = 'SKILL.md';
   $('sp-folder-files').hidden = true;
   message($('sp-folder-status'), '');
   setEditor(source);
-  queueScan();
+  queueScan(inputType);
 }
 
 function navigateTo(path) {
@@ -528,7 +531,7 @@ file.addEventListener('change', async () => {
     if (current !== importRevision) return;
     detachPublicSkill();
     message($('sp-file-status'), '');
-    replaceSource(source);
+    replaceSource(source, 'file');
   } catch (error) {
     if (current === importRevision) message($('sp-file-status'),
       upload.size > maxSkillBytes ? error.message : 'Could not read that file as UTF-8 Markdown.');

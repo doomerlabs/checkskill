@@ -5,6 +5,7 @@ import { snykReportFromFindings } from './snyk-report.js';
 import { importGitHubSkill, listGitHubRefs } from './github.js';
 import { RequestError } from './request-error.js';
 import { createJsonTextCompactor } from './json-text.js';
+import { recordScan } from './scan-analytics.js';
 
 const maxScanRequest = (maxPackageBytes + maxPackageFiles * maxPathLength) * 6 + 4096;
 const maxRefsRequest = 16 * 1024;
@@ -104,7 +105,7 @@ function readPackage(files) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
     if (['GET', 'HEAD'].includes(request.method) && publicSkillInput(url.pathname, url.search)) {
@@ -127,7 +128,14 @@ export default {
         await importGitHubSkill(skill.githubUrl, request.signal, skill.ref) : undefined;
       const input = imported ? readPackage(imported.files) : skill;
       const result = typeof input === 'string' ? scan(input) : scanPackage(input);
-      return Response.json({ ...result, snykForecast: snykReportFromFindings(result), ...imported }, { headers });
+      const snykForecast = snykReportFromFindings(result);
+      const response = Response.json({ ...result, snykForecast, ...imported }, { headers });
+      if (env.SCAN_ANALYTICS && ctx) {
+        const inputType = imported ? 'public_url' : Array.isArray(input) ? 'folder' :
+          request.headers.get('X-CheckSkill-Input-Type') === 'file' ? 'file' : 'markdown';
+        ctx.waitUntil(recordScan(env.SCAN_ANALYTICS, inputType, result, snykForecast).catch(() => {}));
+      }
+      return response;
     } catch (error) {
       const expected = error instanceof RequestError;
       return Response.json({ error: expected ? error.message : 'The request could not be completed.' },

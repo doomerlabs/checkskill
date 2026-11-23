@@ -61,7 +61,7 @@ The checks analyze text. GitHub import fetches public files from the selected sk
 
 ## Privacy and limits
 
-The Worker receives skills to process requests and discards the text and findings after responding. API responses carry `Cache-Control: no-store`. There are no database or storage bindings, analytics scripts, or application request-body logs. Worker observability is disabled in the Wrangler configuration.
+The Worker discards submitted text, URLs, and detailed findings after responding. Cloudflare D1 stores only [daily aggregate scan and finding counts](./docs/scan-analytics.md). API responses carry `Cache-Control: no-store`. Request-body logging and Worker observability are disabled.
 
 Single-file, folder, and GitHub scans accept up to 10 MiB of UTF-8 text. Folders can contain up to 384 text files. Findings mask detected credential literals while preserving their source offsets. The submitted source reaches the Worker before masking. Existing share links still open in the editor.
 

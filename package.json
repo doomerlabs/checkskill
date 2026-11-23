@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "wrangler dev --infer-origin-from-routes=false",
     "test": "node --test",
+    "analytics:export": "node tools/export-scan-analytics.mjs",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

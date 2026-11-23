@@ -42,6 +42,35 @@ test('scan returns the deterministic Snyk forecast for both input formats', asyn
   assert.deepEqual(clean.snykForecast, { issues: [], limited: false, possible: [], unmapped: [] });
 });
 
+test('successful scans record counts without storing skill content', async () => {
+  const calls = [];
+  const pending = [];
+  const env = { SCAN_ANALYTICS: {
+    prepare: () => ({ bind: (...values) => values }),
+    batch: async counts => calls.push(counts),
+  } };
+  const ctx = { waitUntil: promise => pending.push(promise) };
+  const skill = '# Example\nSummarize a local draft.';
+  const request = (body, type, inputType) => new Request('https://checkskill.ai/api/scan', {
+    method: 'POST', body,
+    headers: { 'Content-Type': type, 'X-CheckSkill-Input-Type': inputType },
+  });
+  assert.equal((await worker.fetch(request(skill, 'text/markdown', 'file'), env, ctx)).status, 200);
+  assert.equal((await worker.fetch(request(skill, 'text/markdown', 'other'), env, ctx)).status, 200);
+  const folder = JSON.stringify({ files: [{ path: 'SKILL.md', content: skill }] });
+  assert.equal((await worker.fetch(request(folder, 'application/json', 'file'), env, ctx)).status, 200);
+  assert.equal((await worker.fetch(request(' ', 'text/markdown', 'file'), env, ctx)).status, 400);
+  await Promise.all(pending);
+  assert.deepEqual(calls.map(rows => rows.map(row => row.slice(1))), [
+    [['file', 'scans', '', '', 1]],
+    [['markdown', 'scans', '', '', 1]],
+    [['folder', 'scans', '', '', 1]],
+  ]);
+  env.SCAN_ANALYTICS.batch = async () => { throw new Error('unavailable'); };
+  assert.equal((await worker.fetch(request(skill, 'text/markdown', 'file'), env, ctx)).status, 200);
+  await pending.at(-1);
+});
+
 for (const sourceUrl of [
   'https://github.com/example/skills/blob/feature/preview/demo/SKILL.md',
   'https://raw.githubusercontent.com/example/skills/refs/heads/feature/preview/demo/SKILL.md',
