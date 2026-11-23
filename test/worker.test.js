@@ -85,6 +85,7 @@ for (const sourceUrl of [
   const api = 'https://api.github.com/repos/example/skills';
   const raw = 'https://raw.githubusercontent.com/example/skills/' + commit + '/demo/';
   const replies = new Map([
+    [api, Response.json({ private: false, visibility: 'public' })],
     [`${api}/commits/feature?per_page=1`, new Response(null, { status: 404 })],
     [`${api}/commits/feature%2Fpreview?per_page=1`, Response.json({ sha: commit, commit: { tree: { sha: root } } })],
     [`${api}/git/trees/${root}`, Response.json({ tree: [{ path: 'demo', type: 'tree', sha: skillTree }] })],
@@ -97,8 +98,9 @@ for (const sourceUrl of [
     [raw + 'SKILL.md', new Response(manifest)],
     [raw + 'references/setup.md', new Response(setup)],
   ]);
-  t.mock.method(globalThis, 'fetch', async (url, { redirect }) => {
+  t.mock.method(globalThis, 'fetch', async (url, { redirect, headers }) => {
     assert.equal(redirect, 'manual');
+    assert.equal(headers.Authorization, url.startsWith(api) ? 'Bearer test-import-token' : undefined);
     assert.ok(replies.has(url), url);
     const response = replies.get(url);
     replies.delete(url);
@@ -111,7 +113,7 @@ for (const sourceUrl of [
     body: JSON.stringify({ githubUrl: sourceUrl + '?ignored=example' }),
     headers: { 'Content-Type': 'application/json' },
   });
-  const response = await worker.fetch(request, { SCAN_ANALYTICS: {
+  const response = await worker.fetch(request, { GITHUB_IMPORT_TOKEN: 'test-import-token', SCAN_ANALYTICS: {
     prepare: () => ({ bind: (...values) => values }),
     batch: async rows => analytics.push(...rows),
   } }, { waitUntil: promise => { recorded = promise; } });
@@ -131,6 +133,26 @@ for (const sourceUrl of [
   assert.equal(data.findings[0].path, 'references/setup.md');
   assert.deepEqual(data.snykForecast.issues.map(i => i.code), ['E006']);
   assert.equal(replies.size, 0);
+});
+
+test('authenticated imports reject private repositories before fetching source or refs', async t => {
+  const api = 'https://api.github.com/repos/example/private';
+  const upstream = t.mock.method(globalThis, 'fetch', async (url, { headers }) => {
+    assert.equal(url, api);
+    assert.equal(headers.Authorization, 'Bearer test-import-token');
+    return Response.json({ private: true, visibility: 'private' });
+  });
+  for (const endpoint of ['scan', 'refs']) {
+    const request = new Request(`https://checkskill.ai/api/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ githubUrl: 'https://github.com/example/private/tree/main/demo' }),
+    });
+    const response = await worker.fetch(request, { GITHUB_IMPORT_TOKEN: 'test-import-token' });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: 'Could not find that public GitHub repository.' });
+  }
+  assert.equal(upstream.mock.callCount(), 2);
 });
 
 test('imports the changed skill from the public pull request head', async t => {

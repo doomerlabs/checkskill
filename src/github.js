@@ -277,15 +277,15 @@ async function archiveFiles(response, folder, skill) {
   return { commit, files, folder, skipped: selected.count - files.length };
 }
 
-function githubClient(project, signal) {
+function githubClient(project, signal, token) {
   const apiBase = 'https://api.github.com' + (project ? '/repos/' + project : '');
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(12000)]);
   async function get(url, missing = false, accept = 'application/vnd.github+json') {
     let response;
+    const headers = { 'User-Agent': 'CheckSkill/1.0', Accept: accept };
+    if (token && new URL(url).origin === 'https://api.github.com') headers.Authorization = `Bearer ${token}`;
     try {
-      response = await fetch(url, { redirect: 'manual', signal: deadline, headers: {
-        'User-Agent': 'CheckSkill/1.0', Accept: accept,
-      } });
+      response = await fetch(url, { redirect: 'manual', signal: deadline, headers });
     } catch {
       throw new RequestError(502, 'Could not reach GitHub. Try again or upload the skill folder.');
     }
@@ -316,7 +316,15 @@ function githubClient(project, signal) {
     return result.tree;
   }
 
-  return { get, json, tree, deadline };
+  async function publicRepository() {
+    const repo = await json('', true);
+    if (repo?.private !== false || (repo.visibility && repo.visibility !== 'public')) {
+      throw new RequestError(404, 'Could not find that public GitHub repository.');
+    }
+    return repo;
+  }
+
+  return { get, json, tree, deadline, publicRepository };
 }
 
 async function resolveRef(client, path, maxRefParts = 8) {
@@ -352,21 +360,24 @@ async function publicGitRefs(client, project) {
   return { head: safeRef(head) ? head : undefined, branches };
 }
 
-export async function listGitHubRefs(input, signal) {
+export async function listGitHubRefs(input, signal, token) {
   const source = parseGitHubInput(input);
   if (source.gist) return { project: `${source.owner}/${source.gist}`, defaultRef: source.ref ?? 'HEAD', branches: [] };
   const { project, path, skill, pull } = source;
-  const client = githubClient(project, signal);
+  const client = githubClient(project, signal, token);
   if (pull) {
+    if (token) await client.publicRepository();
     const head = await pullHead(client, pull);
     return { project: head.project, defaultRef: head.commit, branches: [head.commit] };
   }
   let defaultRef = path ? '' : 'HEAD';
   let branches = [];
   try {
-    if (path) defaultRef = (await resolveRef(client, path)).ref;
-    else {
-      const repo = await client.json('', true);
+    if (path) {
+      if (token) await client.publicRepository();
+      defaultRef = (await resolveRef(client, path)).ref;
+    } else {
+      const repo = token ? await client.publicRepository() : await client.json('', true);
       if (!repo || repo.private) throw new RequestError(404, 'Could not find that public GitHub repository.');
       if (safeRef(repo.default_branch)) defaultRef = repo.default_branch;
     }
@@ -389,12 +400,12 @@ export async function listGitHubRefs(input, signal) {
   return { project, skill, defaultRef, branches: [...new Set([defaultRef, ...branches].filter(Boolean))] };
 }
 
-export async function importGitHubSkill(input, signal, preferredRef) {
+export async function importGitHubSkill(input, signal, preferredRef, token) {
   const source = parseGitHubInput(input);
   if (preferredRef !== undefined && !safeRef(preferredRef)) throw new RequestError(400, 'Enter a valid branch, tag, or commit.');
-  if (source.gist) return importGist(source, signal, preferredRef);
-  if (source.pull) return importPull(source, signal, preferredRef);
-  return importRepository(source, signal, preferredRef);
+  if (source.gist) return importGist(source, signal, preferredRef, token);
+  if (source.pull) return importPull(source, signal, preferredRef, token);
+  return importRepository(source, signal, preferredRef, token);
 }
 
 async function pullHead(client, pull) {
@@ -409,8 +420,9 @@ async function pullHead(client, pull) {
   return { project: `${owner}/${name}`, commit: result.head.sha };
 }
 
-async function importPull({ project, pull }, signal, preferredRef) {
-  const client = githubClient(project, signal);
+async function importPull({ project, pull }, signal, preferredRef, token) {
+  const client = githubClient(project, signal, token);
+  if (token) await client.publicRepository();
   const { project: head, commit } = await pullHead(client, pull);
   const changed = await client.json(`/pulls/${pull}/files?per_page=100`);
   if (!Array.isArray(changed) || changed.length === 100) {
@@ -425,13 +437,13 @@ async function importPull({ project, pull }, signal, preferredRef) {
   }
   if (folders.size > 1) throw new RequestError(400, 'This pull request touches multiple skills. Paste a link to the specific skill folder.');
   const folder = [...folders][0] ?? '';
-  return importRepository({ project: head, path: [preferredRef ?? commit, ...folder.split('/').filter(Boolean)] }, signal);
+  return importRepository({ project: head, path: [preferredRef ?? commit, ...folder.split('/').filter(Boolean)] }, signal, undefined, token);
 }
 
-async function importGist({ gist, owner, ref, file, anchor }, signal, preferredRef) {
+async function importGist({ gist, owner, ref, file, anchor }, signal, preferredRef, token) {
   const revision = preferredRef === 'HEAD' ? ref : preferredRef ?? ref;
   if (revision && !sha.test(revision)) throw new RequestError(400, 'Enter a Gist revision commit.');
-  const client = githubClient(undefined, signal);
+  const client = githubClient(undefined, signal, token);
   const result = await client.json(`/gists/${gist}${revision ? '/' + revision : ''}`, true, maxPackageBytes + 2 * 1024 * 1024);
   if (!result?.public) throw new RequestError(404, 'Could not find that public Gist.');
   const names = Object.keys(result.files ?? {}).filter(name => safeFile(name) && !name.includes('/'));
@@ -465,10 +477,11 @@ async function importGist({ gist, owner, ref, file, anchor }, signal, preferredR
   };
 }
 
-async function importRepository({ project, path, skill }, signal, preferredRef) {
-  const client = githubClient(project, signal);
+async function importRepository({ project, path, skill }, signal, preferredRef, token) {
+  const client = githubClient(project, signal, token);
   let resolved;
   try {
+    if (token) await client.publicRepository();
     resolved = await resolveRef(client, path ?? [preferredRef ?? 'HEAD']);
     if (path && preferredRef && preferredRef !== resolved.ref) {
       resolved = await resolveRef(client, [preferredRef, ...resolved.folder.split('/').filter(Boolean)], 1);
