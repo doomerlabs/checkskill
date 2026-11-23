@@ -104,7 +104,24 @@ for (const sourceUrl of [
     replies.delete(url);
     return response;
   });
-  const response = await post('scan', JSON.stringify({ githubUrl: sourceUrl }), 'application/json');
+  const analytics = [];
+  let recorded;
+  const request = new Request('https://checkskill.ai/api/scan', {
+    method: 'POST',
+    body: JSON.stringify({ githubUrl: sourceUrl + '?ignored=example' }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const response = await worker.fetch(request, { SCAN_ANALYTICS: {
+    prepare: () => ({ bind: (...values) => values }),
+    batch: async rows => analytics.push(...rows),
+  } }, { waitUntil: promise => { recorded = promise; } });
+  await recorded;
+  assert.deepEqual(analytics.map(row => row.slice(1)), [
+    [`https://github.com/example/skills/tree/${commit}/demo`, 'scans', '', '', 1],
+    [`https://github.com/example/skills/tree/${commit}/demo`, 'checkskill_findings', '', '', 1],
+    [`https://github.com/example/skills/tree/${commit}/demo`, 'scans_with_snyk_findings', '', '', 1],
+    [`https://github.com/example/skills/tree/${commit}/demo`, 'snyk_findings', 'E006', 'CRITICAL', 1],
+  ]);
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.deepEqual(data.source, { project: 'example/skills', ref: 'feature/preview', commit, folder: 'demo', skipped: 2 });

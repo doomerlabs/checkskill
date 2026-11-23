@@ -19,7 +19,6 @@ const publicStatus = $('sp-public-status');
 const scanDialog = $('sp-scan-dialog');
 const publicResult = $('sp-public-result');
 const report = $('sp-full-report');
-const sourceToggle = $('sp-source-toggle');
 const workspace = $('sp-workspace');
 const githubDialog = $('sp-github-dialog');
 const githubUrl = $('sp-github-url');
@@ -252,6 +251,14 @@ function appendEvidence(body, label, entries) {
   body.append(element('h3', 'sp-audit-evidence', label), ...entries);
 }
 
+const snykSeverities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
+
+function snykForecastStatus({ issues = [], possible = [], unmapped = [], limited }) {
+  const incomplete = limited || unmapped.length > 0;
+  const risk = snykSeverities.find(level => issues.some(issue => issue.severity === level));
+  return { incomplete, risk, label: risk || (incomplete ? 'Incomplete' : possible.length ? 'Review suggested' : 'No issues predicted') };
+}
+
 function showSnyk(panel, forecast, entries, extra, scanned) {
   const body = panel.querySelector('.sp-scanner-body');
   if (!forecast) {
@@ -261,15 +268,12 @@ function showSnyk(panel, forecast, entries, extra, scanned) {
     return '';
   }
   const { issues = [], possible = [], unmapped = [], limited } = forecast;
-  const incomplete = limited || unmapped.length > 0;
-  const severities = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
-  const risk = severities.find(level => issues.some(issue => issue.severity === level));
-  const label = risk || (incomplete ? 'Incomplete' : possible.length ? 'Review suggested' : 'No issues predicted');
+  const { incomplete, risk, label } = snykForecastStatus(forecast);
   panelStatus(panel, label, risk === 'CRITICAL' || risk === 'HIGH' ? 'high' :
     issues.length || incomplete || possible.length ? 'caution' : 'clear');
   if (issues.length) {
     const list = element('ul', 'sp-audit-issues');
-    for (const issue of [...issues].sort((a, b) => severities.indexOf(a.severity) - severities.indexOf(b.severity))) {
+    for (const issue of [...issues].sort((a, b) => snykSeverities.indexOf(a.severity) - snykSeverities.indexOf(b.severity))) {
       const row = element('li', 'sp-audit-issue');
       const meta = element('div', 'sp-audit-meta');
       const severity = element('span', 'sp-scan-status', issue.severity);
@@ -290,13 +294,13 @@ function showSnyk(panel, forecast, entries, extra, scanned) {
   return label;
 }
 
-function issueReason(code) {
+function issueReason(findings, code) {
   const matches = findings.filter(finding => finding.reason && finding.references.some(reference =>
     reference.name === 'Snyk' && reference.code.match(/^[A-Z]\d{3}\b/)?.[0] === code));
   return (matches.find(finding => finding.snykEvidence === 'direct') ?? matches[0])?.reason;
 }
 
-function renderPublicReport(forecast) {
+function renderPublicReport(forecast, findings) {
   const container = $('sp-report-findings');
   const { issues = [], possible = [], unmapped = [], limited } = forecast ?? {};
   $('sp-report-count').textContent = forecast ? `${issues.length} predicted ${issues.length === 1 ? 'issue' : 'issues'}` : 'Forecast unavailable';
@@ -309,7 +313,7 @@ function renderPublicReport(forecast) {
     severity.dataset.tone = ['CRITICAL', 'HIGH'].includes(issue.severity) ? 'high' : 'caution';
     labels.append(element('code', '', issue.code), severity);
     card.append(labels, element('h3', '', issue.message));
-    const reason = issueReason(issue.code);
+    const reason = issueReason(findings, issue.code);
     if (reason) {
       const analysis = element('ul', 'sp-report-analysis');
       analysis.append(element('li', '', reason));
@@ -710,19 +714,13 @@ function showImportedSkill(data) {
   clearTimeout(scanTimer);
   scanRequest?.abort();
   const { project, folder, ref, commit, skipped } = data.source;
-  const scope = folder ? `${project}/${folder}` : project;
-  const files = new Map(data.files.map(file => [file.path, file.content]));
   const skippedNote = skipped ? ` · ${skipped} skipped` : '';
-  showPackage(files, `${scope} · ${ref} · ${commit.slice(0, 8)} · ${files.size} ${files.size === 1 ? 'file' : 'files'}${skippedNote}`);
-  findings = data.findings;
-  paintSource(editor.value);
-  showFindings({ scanned: true, limited: data.limited, forecast: data.snykForecast });
-  renderPublicReport(data.snykForecast);
+  renderPublicReport(data.snykForecast, data.findings);
   const base = skillOverviewPath(currentRoute);
   importedPath = base;
   const slug = base.split('?')[0].split('/').at(-1);
   const title = data.source.gistFile ?? (folder.split('/').at(-1) || slug);
-  const manifest = files.get('SKILL.md') ?? '';
+  const manifest = data.files.find(file => file.path === 'SKILL.md')?.content ?? '';
   const frontmatter = manifest.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1] ?? '';
   const heading = manifest.match(/^#\s+([^\n]+)$/m)?.[1]?.trim();
   const description = frontmatter.match(/^description:\s*([^\r\n]+)$/m)?.[1]?.trim().replace(/^(['"])(.*)\1$/, '$2');
@@ -731,7 +729,7 @@ function showImportedSkill(data) {
   $('sp-result-revision').textContent = `${ref === 'HEAD' ? 'Default branch' : ref} · ${commit.slice(0, 8)}`;
   $('sp-result-description-section').hidden = !description || /^[|>][+-]?$/.test(description);
   $('sp-result-description').textContent = description ?? '';
-  $('sp-result-files').textContent = `${files.size} ${files.size === 1 ? 'file' : 'files'} scanned${skippedNote}`;
+  $('sp-result-files').textContent = `${data.files.length} ${data.files.length === 1 ? 'file' : 'files'} scanned${skippedNote}`;
   const repository = `https://github.com/${project}`;
   const folderPath = folder.split('/').map(part => encodeURIComponent(part)
     .replace(/[!'()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase())).join('/');
@@ -748,8 +746,7 @@ function showImportedSkill(data) {
     $('sp-published-snyk').href = published + '/security/snyk';
   }
   $('sp-snyk-link').href = snykPreviewPath(base);
-  $('sp-snyk-summary').textContent = $('sp-snyk').querySelector('.sp-scan-status').textContent;
-  sourceToggle.open = false;
+  $('sp-snyk-summary').textContent = data.snykForecast ? snykForecastStatus(data.snykForecast).label : 'Forecast unavailable';
   showPage();
 }
 
@@ -776,8 +773,7 @@ function showPage() {
   publicResult.hidden = !loaded;
   report.hidden = !showReport;
   $('sp-result-overview').hidden = showReport;
-  sourceToggle.hidden = !loaded || showReport;
-  workspace.hidden = about || guide || showReport || routePendingOrFailed || (loaded ? !sourceToggle.open : !localMode);
+  workspace.hidden = about || guide || loaded || routePendingOrFailed || !localMode;
   const back = $('sp-result-back');
   back.href = showReport ? importedPath : '/';
   back.textContent = showReport ? '← Skill overview' : '← New scan';
@@ -808,7 +804,6 @@ $('sp-local-mode').addEventListener('click', () => {
   editor.focus();
 });
 $('sp-route-retry').addEventListener('click', () => location.reload());
-sourceToggle.addEventListener('toggle', showPage);
 for (const id of ['sp-result-back', 'sp-snyk-link']) {
   $(id).addEventListener('click', event => {
     const link = event.currentTarget;

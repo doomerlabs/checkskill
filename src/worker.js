@@ -133,7 +133,7 @@ export default {
       if (env.SCAN_ANALYTICS && ctx) {
         const inputType = imported ? 'public_url' : Array.isArray(input) ? 'folder' :
           request.headers.get('X-CheckSkill-Input-Type') === 'file' ? 'file' : 'markdown';
-        ctx.waitUntil(recordScan(env.SCAN_ANALYTICS, inputType, result, snykForecast).catch(() => {}));
+        ctx.waitUntil(recordScan(env.SCAN_ANALYTICS, inputType, result, snykForecast, imported?.source).catch(() => {}));
       }
       return response;
     } catch (error) {
