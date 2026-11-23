@@ -123,9 +123,11 @@ export default {
       if (origin && origin !== url.origin) throw new RequestError(403, 'This request must come from the same site.');
       const refsOnly = url.pathname === '/api/refs';
       const skill = await readInput(request, refsOnly);
-      if (refsOnly) return Response.json(await listGitHubRefs(skill.githubUrl, request.signal, env.GITHUB_IMPORT_TOKEN), { headers });
+      const githubAuthorization = env.GITHUB_IMPORT_OAUTH ? `Basic ${btoa(env.GITHUB_IMPORT_OAUTH)}` :
+        env.GITHUB_IMPORT_TOKEN ? `Bearer ${env.GITHUB_IMPORT_TOKEN}` : undefined;
+      if (refsOnly) return Response.json(await listGitHubRefs(skill.githubUrl, request.signal, githubAuthorization), { headers });
       const imported = typeof skill === 'object' && Object.hasOwn(skill, 'githubUrl') ?
-        await importGitHubSkill(skill.githubUrl, request.signal, skill.ref, env.GITHUB_IMPORT_TOKEN) : undefined;
+        await importGitHubSkill(skill.githubUrl, request.signal, skill.ref, githubAuthorization) : undefined;
       const input = imported ? readPackage(imported.files) : skill;
       const result = typeof input === 'string' ? scan(input) : scanPackage(input);
       const snykForecast = snykReportFromFindings(result);

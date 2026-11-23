@@ -100,7 +100,7 @@ for (const sourceUrl of [
   ]);
   t.mock.method(globalThis, 'fetch', async (url, { redirect, headers }) => {
     assert.equal(redirect, 'manual');
-    assert.equal(headers.Authorization, url.startsWith(api) ? 'Bearer test-import-token' : undefined);
+    assert.equal(headers.Authorization, url.startsWith(api) ? 'Basic ' + btoa('test-client:test-secret') : undefined);
     assert.ok(replies.has(url), url);
     const response = replies.get(url);
     replies.delete(url);
@@ -113,7 +113,7 @@ for (const sourceUrl of [
     body: JSON.stringify({ githubUrl: sourceUrl + '?ignored=example' }),
     headers: { 'Content-Type': 'application/json' },
   });
-  const response = await worker.fetch(request, { GITHUB_IMPORT_TOKEN: 'test-import-token', SCAN_ANALYTICS: {
+  const response = await worker.fetch(request, { GITHUB_IMPORT_OAUTH: 'test-client:test-secret', GITHUB_IMPORT_TOKEN: 'test-import-token', SCAN_ANALYTICS: {
     prepare: () => ({ bind: (...values) => values }),
     batch: async rows => analytics.push(...rows),
   } }, { waitUntil: promise => { recorded = promise; } });
